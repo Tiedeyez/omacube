@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "tiedeyez.omacube",
+  "name": "Omacube",
+  "version": "0.1.0",
+  "author": "Tiedeyez",
+  "license": "MIT",
+  "description": "An animated desktop background of endlessly nested 3x3 puzzle cubes. The view dives forever into a cube corner where every corner piece is another whole cube; each cube scrambles itself with real layer turns and then solves itself, inside a drifting field of tumbling cubes. Switching workspaces twists the view 120 degrees and dives one level deeper. One GPU fragment shader, no files, processes or network.",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

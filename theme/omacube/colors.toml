@@ -1,0 +1,32 @@
+# Omacube: black puzzle-cube plastic with the six classic sticker colours.
+mode = "dark"
+
+accent = "#ffd500"
+selection = "#26303f"
+muted = "#4a4f5c"
+
+background = "#0b0b0d"
+dark_background = "#070708"
+darker_background = "#040406"
+lighter_background = "#17181c"
+
+foreground = "#f4f4f4"
+dark_foreground = "#9aa0aa"
+light_foreground = "#d6d8dc"
+bright_foreground = "#ffffff"
+
+red = "#e0304a"
+yellow = "#ffd500"
+orange = "#ff6a1a"
+green = "#00b86b"
+cyan = "#3fb6e6"
+blue = "#2e6fe0"
+magenta = "#c06cd8"
+brown = "#8a5a2b"
+
+bright_red = "#ff5468"
+bright_yellow = "#ffe347"
+bright_green = "#2fd88a"
+bright_cyan = "#72cdf0"
+bright_blue = "#5b8ff0"
+bright_magenta = "#d796ea"
