@@ -38,7 +38,7 @@ const float P = 3.0;          // lattice pitch: neighbouring cubes touch
 const float H = 0.5;          // cubie half size, so a cube spans -1.5 .. 1.5
 const float R = 2.5980762;    // a cube's circumradius, 1.5 * sqrt(3)
 const float VIEW = 15.0;      // half the screen height, world units
-const float FILL = 0.74;      // chance a cell in the top four layers holds a cube
+const float FILL = 0.92;      // chance a cell in the top four layers is switched on
 const float SLOT = 0.95;      // seconds per move slot at speed 8/8
 const float TURN = 0.6;       // fraction of a slot spent turning
 const float CYCLE = 14.0;     // slots per cycle: 3 moves, 4 rest, 3 undo, 4 rest
@@ -94,12 +94,36 @@ float hash13(vec3 p) {
 // Cell id modulo 1024 on each axis. Multiplying by 1/1024 is exact.
 vec3 cellKey(vec3 id) { return id - PERIOD * floor(id * (1.0 / PERIOD)); }
 
-// The stack fills the half-space of cells whose ids sum to 0 or less. The top
-// four layers have random gaps, which make the stair-stepped hexagonal stars.
-bool occupied(vec3 id, vec3 key) {
+// The stack is a down-set: whenever a cell holds a cube, so do the cells
+// behind it along -x, -y and -z. Seen down the diagonal, the surface of a
+// down-set is made of whole faces only. A face is exposed when the cell in
+// front of it is empty, and every cell that could cover any part of that
+// face lies further along all three axes than that empty cell, so it is
+// empty too. Random holes with cubes above them would instead show faces cut
+// into triangles.
+//
+// Cells whose ids sum to more than 0 are empty and below -3 are full. In the
+// four layers between, each cell is switched on at random, and a cell holds a
+// cube only if every cell of its down-cone inside those layers is on: the
+// cells id - (a, b, c) with a, b, c >= 0. That cone rule is what makes it a
+// down-set, and missing cells leave the stair-stepped hexagonal stars.
+bool occupied(vec3 id) {
     float s = id.x + id.y + id.z;
     if (s > 0.5) return false;
-    return s < -3.5 || hash13(key) < FILL;
+    if (s < -3.5) return true;
+#if defined(OMACUBE_OLD_FILL)
+    return hash13(cellKey(id)) < 0.74;  // the previous rule, to demonstrate its bug
+#endif
+    float room = s + 3.0;               // 0..3: cone depth left inside the band
+    for (int a = 0; a < 4; a++) {
+        for (int b = 0; b < 4; b++) {
+            for (int c = 0; c < 4; c++) {
+                if (float(a + b + c) > room + 0.5) continue;
+                if (hash13(cellKey(id - vec3(float(a), float(b), float(c)))) >= FILL) return false;
+            }
+        }
+    }
+    return true;
 }
 
 // Speed m / 8 with m in {6, 7, 8, 9, 10, 12}. A cycle lasts 13.3 s * m / 8,
@@ -178,6 +202,9 @@ Cube cubeState(vec3 key) {
     if (slot < 2.5)      { c.idx = slot; c.pre = slot; }                    // moves 0, 1, 2
     else if (slot < 6.5) { c.pre = 3.0; }                                   // rest
     else if (slot < 9.5) { c.idx = 9.0 - slot; c.pre = c.idx + 1.0; sgn = -1.0; } // undo 2, 1, 0
+#if defined(OMACUBE_STATIC)
+    c.idx = -1.0;                        // self-check 6: nothing turns
+#endif
     if (c.idx > -0.5) {
         vec3 ax, ly, dr;
         cycleMoves(c.id, c.cycKey, ax, ly, dr);
@@ -223,6 +250,7 @@ struct Hit {
     vec3 cell;     // cubie, in its cube's frame before the move in progress
     vec3 lp;       // hit point relative to that cubie, same frame
     vec3 key;      // the cube's cell key
+    vec3 cid;      // the cube's lattice cell
     float id;      // the cube's move hash id
     float cycKey;
     float pre;
@@ -258,14 +286,14 @@ float mapScene(vec3 p, out Hit hit) {
         vec3 q = p - id * P;
         if (length(q) - R > d) continue;                // too far to matter
         vec3 key = cellKey(id);
-        if (!occupied(id, key)) continue;
+        if (!occupied(id)) continue;
         Cube cb = cubeState(key);
         vec3 cell, lp;
         bool moving;
         float dc = cubeSDF(q, cb.axis, cb.layer, cb.ang, cell, lp, moving);
         if (dc < d) {
             d = dc;
-            hit.cell = cell; hit.lp = lp; hit.key = key;
+            hit.cell = cell; hit.lp = lp; hit.key = key; hit.cid = id;
             hit.id = cb.id; hit.cycKey = cb.cycKey; hit.pre = cb.pre;
             hit.axis = cb.axis; hit.ang = moving ? cb.ang : 0.0;
 #if defined(OMACUBE_DEBUG)
@@ -344,7 +372,7 @@ float mapRef(vec3 p) {
         vec3 o = vec3(imod(fi, 3.0), imod(floor(fi / 3.0 + 0.01), 3.0), floor(fi / 9.0 + 0.01)) - 1.0;
         vec3 id = id0 + o;
         vec3 key = cellKey(id);
-        if (!occupied(id, key)) continue;
+        if (!occupied(id)) continue;
         Cube cb = cubeState(key);
         vec3 cell, lp;
         bool moving;
@@ -404,11 +432,11 @@ void main() {
     if (!hitAny && t <= TMAX && d < pw) { hitAny = true; grazed = true; }
 
     vec3 col = bgColor.rgb;
+    vec3 nl = vec3(0.0);                                // hit face normal, cubie frame
     if (hitAny) {
         // which face of the cubie was hit, in the cubie's own frame
         vec3 lp = h.lp;
         vec3 al = abs(lp);
-        vec3 nl;
         vec2 fuv;
         float fa;
         if (al.x >= al.y && al.x >= al.z) { nl = vec3(sign(lp.x), 0.0, 0.0); fuv = lp.yz; fa = 0.0; }
@@ -417,14 +445,21 @@ void main() {
 
         col = bodyColor.rgb;
         if (dot(h.cell, nl) > 0.5) {                    // outer faces carry stickers
-            // rounded-square sticker: half size 0.43, corner radius 0.035
-            vec2 sq = abs(fuv) - vec2(0.395);
+            // Rounded-square sticker: half size 0.43, corner radius 0.035,
+            // pulled in a little more on sides where this cubie meets the
+            // next cube, so every cube reads on its own in a flat run.
+            vec2 ce = fa < 0.5 ? h.cell.yz : (fa < 1.5 ? h.cell.xz : h.cell.xy);
+            vec2 lo = vec2(-0.43) + 0.045 * step(0.5, -ce);
+            vec2 hi = vec2(0.43) - 0.045 * step(0.5, ce);
+            vec2 ctr = 0.5 * (lo + hi);
+            vec2 sq = abs(fuv - ctr) - (0.5 * (hi - lo) - 0.035);
             float sd = length(max(sq, 0.0)) + min(max(sq.x, sq.y), 0.0) - 0.035;
             // Antialias over exactly one screen pixel. The projection is
             // orthographic, so a one-pixel step on screen moves the hit point
             // linearly within the face plane; measure how much sd changes.
-            vec2 g = (sq.x > 0.0 && sq.y > 0.0) ? sign(fuv) * normalize(sq)
-                   : (sq.x > sq.y ? vec2(sign(fuv.x), 0.0) : vec2(0.0, sign(fuv.y)));
+            vec2 rel = fuv - ctr;
+            vec2 g = (sq.x > 0.0 && sq.y > 0.0) ? sign(rel) * normalize(sq)
+                   : (sq.x > sq.y ? vec2(sign(rel.x), 0.0) : vec2(0.0, sign(rel.y)));
             vec3 nw = rotA(nl, h.axis, h.ang);          // face normal in the world
             float nf = min(dot(nw, fw), -0.05);
             vec3 dx = rotA((rt - fw * (dot(nw, rt) / nf)) * pw, h.axis, -h.ang);
@@ -486,6 +521,17 @@ void main() {
             axisMask += na;
         }
         if (!ok) col = bad;
+    }
+#elif OMACUBE_DEBUG == 6
+    // with nothing turning, a visible pixel on a cube face whose two
+    // partial coverers (the cells beside the cell in front of it) hold a
+    // cube belongs to a face cut into a triangle
+    col = dim;
+    if (hitAny && dot(h.cell, nl) > 0.5) {
+        vec3 front = h.cid + nl;
+        vec3 e1 = abs(nl.x) > 0.5 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        vec3 e2 = abs(nl.z) > 0.5 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0);
+        if (occupied(front + e1) || occupied(front + e2)) col = bad;
     }
 #endif
 #endif

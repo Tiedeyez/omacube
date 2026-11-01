@@ -1,9 +1,12 @@
-// Development preview for dev/preview.sh and dev/selfcheck.sh: renders the
+// Development preview for dev/preview.sh and dev/selfcheck.sh (which run it
+// from a staging folder next to a copy of Palette.js): renders the
 // shader at a fixed size on a click-through bottom-layer surface and saves
 // numbered PNG frames. Nothing here is part of the running plugin.
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
+import "Palette.js" as Palette
 
 ShellRoot {
     id: root
@@ -19,6 +22,13 @@ ShellRoot {
     readonly property int w: parseInt(Quickshell.env("OMACUBE_W") || "1920")
     readonly property int h: parseInt(Quickshell.env("OMACUBE_H") || "1080")
     property int frame: 0
+    // OMACUBE_THEME: a theme's colors.toml to render with (default: classic)
+    property var palette: Palette.CLASSIC
+    FileView {
+        path: Quickshell.env("OMACUBE_THEME") || ""
+        printErrors: false
+        onLoaded: root.palette = Palette.fromText(text())
+    }
 
     function wrap(x, m) { return ((x % m) + m) % m }
 
@@ -44,14 +54,14 @@ ShellRoot {
             property real spin: 2.0943951024 * root.wrap(root.turns, 3)
             property real aspect: width / height
             property real texel: 1 / height
-            property color c0: "#c41e3a"
-            property color c1: "#ff5800"
-            property color c2: "#f4f4f4"
-            property color c3: "#ffd500"
-            property color c4: "#009e60"
-            property color c5: "#0051ba"
-            property color bodyColor: "#0b0b0d"
-            property color bgColor: "#040406"
+            property color c0: root.palette.stickers[0]
+            property color c1: root.palette.stickers[1]
+            property color c2: root.palette.stickers[2]
+            property color c3: root.palette.stickers[3]
+            property color c4: root.palette.stickers[4]
+            property color c5: root.palette.stickers[5]
+            property color bodyColor: root.palette.plastic
+            property color bgColor: root.palette.empty
         }
 
         Timer { interval: 600; running: true; onTriggered: root.grab() }

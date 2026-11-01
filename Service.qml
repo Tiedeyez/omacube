@@ -3,15 +3,19 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Hyprland
+import Quickshell.Io
 import Quickshell.Wayland
+import "Palette.js" as Palette
 
 // Omacube: an animated desktop background of an endless isometric stack of
 // 3x3 puzzle cubes that turn their layers and tumble, drawn flat by one
 // fragment shader (shaders/omacube.frag) on a layer-shell surface per screen.
 // Every workspace switch rolls the whole stack 120 degrees, the isometric
 // view's own symmetry, so the pattern clicks back into line like a cube turn.
+// The cubes take their colours from the active Omarchy theme.
 //
-// Nothing here reads or writes files, runs processes or touches the network.
+// It reads two small files, the active theme's colors.toml and theme.name;
+// writes nothing, runs no processes and touches no network (DISCLOSURE.md).
 // It sits on the "bottom" layer (above the stock wallpaper, below windows)
 // with an empty input region, so clicks fall through to the desktop.
 Item {
@@ -22,11 +26,39 @@ Item {
   readonly property real renderScale: 0.75
   // Redraws per second. The shader only redraws when the clock ticks.
   readonly property int fps: 24
-  // Solved-cube sticker colours: +x, -x, +y, -y, +z, -z. With white up and
-  // green in front, red is on the right: the standard colour scheme.
-  readonly property var stickers: ["#c41e3a", "#ff5800", "#f4f4f4", "#ffd500", "#009e60", "#0051ba"]
-  readonly property color plastic: "#0b0b0d"
-  readonly property color voidColor: "#040406"
+
+  // ---- colours from the active theme --------------------------------------
+  // Palette.js maps the theme's red, orange, foreground (as white), yellow,
+  // green and blue onto the stickers (+x, -x, +y, -y, +z, -z), and its
+  // background onto the plastic. The Omacube theme sets the classic cube.
+  // `omarchy theme set` swaps the new theme in and then writes theme.name,
+  // so a change to theme.name means the new colors.toml is ready to read.
+  readonly property string currentDir: {
+    var home = Quickshell.env("HOME")
+    return home ? home + "/.local/state/omarchy/current" : ""
+  }
+  property var palette: Palette.CLASSIC
+  property bool colorsReady: false     // no crossfade for the first load
+
+  function applyColors(text) {
+    palette = Palette.fromText(text)
+    colorsReady = true
+  }
+
+  FileView {
+    id: themeColors
+    path: root.currentDir ? root.currentDir + "/theme/colors.toml" : ""
+    watchChanges: false
+    printErrors: false
+    onLoaded: root.applyColors(text())
+    onLoadFailed: root.applyColors("")
+  }
+  FileView {
+    path: root.currentDir ? root.currentDir + "/theme.name" : ""
+    watchChanges: true
+    printErrors: false
+    onFileChanged: themeColors.reload()
+  }
 
   // ---- one seamless loop ---------------------------------------------------
   // Every cube's cycle lasts 13.3 s * m / 8 for some m in {6,7,8,9,10,12},
@@ -103,7 +135,7 @@ Item {
       readonly property var monitor: Hyprland.monitorFor(modelData)
       readonly property bool covered: !!(monitor && monitor.activeWorkspace && monitor.activeWorkspace.hasFullscreen)
 
-      color: root.voidColor
+      color: root.palette.empty
       anchors { top: true; bottom: true; left: true; right: true }
       exclusionMode: ExclusionMode.Ignore
       WlrLayershell.namespace: "tiedeyez-omacube"
@@ -128,14 +160,23 @@ Item {
           property real spin: root.spin
           property real aspect: width / Math.max(1, height)
           property real texel: 1 / canvas.texH
-          property color c0: root.stickers[0]
-          property color c1: root.stickers[1]
-          property color c2: root.stickers[2]
-          property color c3: root.stickers[3]
-          property color c4: root.stickers[4]
-          property color c5: root.stickers[5]
-          property color bodyColor: root.plastic
-          property color bgColor: root.voidColor
+          property color c0: root.palette.stickers[0]
+          property color c1: root.palette.stickers[1]
+          property color c2: root.palette.stickers[2]
+          property color c3: root.palette.stickers[3]
+          property color c4: root.palette.stickers[4]
+          property color c5: root.palette.stickers[5]
+          property color bodyColor: root.palette.plastic
+          property color bgColor: root.palette.empty
+          // crossfade to a new theme's colours
+          Behavior on c0 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
+          Behavior on c1 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
+          Behavior on c2 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
+          Behavior on c3 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
+          Behavior on c4 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
+          Behavior on c5 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
+          Behavior on bodyColor { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
+          Behavior on bgColor { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
         }
       }
     }

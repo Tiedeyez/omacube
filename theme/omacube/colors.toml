@@ -1,6 +1,20 @@
-# Omacube: black puzzle-cube plastic with the six classic sticker colours.
+# Omacube: black puzzle-cube plastic and the classic sticker colours.
 mode = "dark"
 
+# The Omacube plugin paints its cubes from the active theme. These keys give
+# this theme the exact classic cube: red, orange, white, yellow, green and
+# blue stickers on black plastic. Omarchy itself ignores them.
+omacube_red = "#c41e3a"
+omacube_orange = "#ff5800"
+omacube_white = "#f4f4f4"
+omacube_yellow = "#ffd500"
+omacube_green = "#009e60"
+omacube_blue = "#0051ba"
+omacube_plastic = "#0b0b0d"
+omacube_empty = "#040406"
+
+# The usual theme palette, close to the stickers but tuned to stay readable
+# as terminal and editor colours on the black background.
 accent = "#ffd500"
 selection = "#26303f"
 muted = "#4a4f5c"

@@ -11,6 +11,9 @@ brute force rather than the shader's shortcuts:
   scene      the 8-cell distance estimate never overestimates (so the ray
              march can never step through a cube), checked against a brute
              force over every nearby cell; the previous scheme is checked too
+  stack      the stack is a down-set, so at rest every visible face is whole:
+             exact rays from across each exposed face, tested against every
+             nearby cube, never show part of a face (no triangles)
   colours    "undo every move back to solved" gives the same colours as
              physically turning a solved cube, and every state is legal
   cycle      colours and geometry agree at every slot boundary of a cycle
@@ -34,7 +37,8 @@ R = 1.5 * math.sqrt(3)  # cube circumradius
 SLOT = Fraction(19, 20)  # 0.95 s
 CYCLE = 14
 TURN = 0.6
-FILL = 0.74
+FILL = 0.74             # the distance test's random scene
+SWITCH = 0.92           # the stack's per-cell switch chance (shader FILL)
 
 failures = []
 
@@ -244,6 +248,117 @@ def test_scene(rng):
           f"a safe underestimate elsewhere)")
     check("scene: the previous estimate was unsafe (expected to fail before the fix)",
           old_bad > 0, f"overestimated at {old_bad} of {total} samples, by up to {worst_old:.2f}")
+
+
+# ---- the stack: whole faces only ------------------------------------------------
+
+def make_switch(seed, chance):
+    memo = {}
+    def on(c):
+        if c not in memo:
+            memo[c] = random.Random(f"{seed}:{c}").random() < chance
+        return memo[c]
+    return on
+
+
+def occupied_old(c, on):
+    """The previous rule: top four layers filled independently at random."""
+    s = sum(c)
+    return s <= 0 and (s <= -4 or on(c))
+
+
+def occupied_new(c, on):
+    """The shader's occupied(): a cell holds a cube only if its whole down-cone
+    inside the top four layers is switched on."""
+    s = sum(c)
+    if s > 0:
+        return False
+    if s <= -4:
+        return True
+    room = s + 3
+    for a in range(4):
+        for b in range(4):
+            for d in range(4):
+                if a + b + d <= room and not on((c[0] - a, c[1] - b, c[2] - d)):
+                    return False
+    return True
+
+
+def ray_hits_box(p, d, lo, hi):
+    tmin, tmax = 1e-9, 1e9
+    for k in range(3):
+        t1 = (lo[k] - p[k]) / d[k]
+        t2 = (hi[k] - p[k]) / d[k]
+        tmin = max(tmin, min(t1, t2))
+        tmax = min(tmax, max(t1, t2))
+    return tmax > tmin + 1e-9          # a real overlap, not a touch
+
+
+def memoize(f):
+    memo = {}
+    def g(c):
+        if c not in memo:
+            memo[c] = f(c)
+        return memo[c]
+    return g
+
+
+def face_coverage(occ, span=5):
+    """For every exposed face (cube units, unit cubes on integer cells), cast
+    rays towards the viewer from 25 points on the face; return the number of
+    faces that are partly covered and the number fully covered."""
+    view = (1.0, 1.0, 1.0)
+    offsets = (-0.45, -0.25, 0.0, 0.25, 0.45)
+    partial = covered = faces = 0
+    for i in range(-span, span + 1):
+        for j in range(-span, span + 1):
+            for k in range(-span, span + 1):
+                c = (i, j, k)
+                if not -6 <= sum(c) <= 0 or not occ(c):
+                    continue
+                for ax in range(3):
+                    n = [0, 0, 0]
+                    n[ax] = 1
+                    if occ(add(c, tuple(n))):
+                        continue                    # not an exposed face
+                    faces += 1
+                    t1, t2 = [a for a in range(3) if a != ax]
+                    hit = 0
+                    for u in offsets:
+                        for v in offsets:
+                            p = list(c)
+                            p[ax] += 0.5
+                            p[t1] += u
+                            p[t2] += v
+                            blocked = False
+                            for w in ((a, b, d) for a in range(-1, 5) for b in range(-1, 5) for d in range(-1, 5)):
+                                q = add(c, w)
+                                if q == c or sum(q) > 0 or not occ(q):
+                                    continue
+                                if ray_hits_box(p, view, add(q, (-0.5,) * 3), add(q, (0.5,) * 3)):
+                                    blocked = True
+                                    break
+                            hit += blocked
+                    if 0 < hit < 25:
+                        partial += 1
+                    elif hit == 25:
+                        covered += 1
+    return partial, covered, faces
+
+
+def test_stack():
+    on = make_switch(1, SWITCH)
+    down = all(not occupied_new(c, on) or all(occupied_new(add(c, e), on)
+                                               for e in ((-1, 0, 0), (0, -1, 0), (0, 0, -1)))
+               for c in ((i, j, k) for i in range(-6, 7) for j in range(-6, 7) for k in range(-6, 7)))
+    check("stack: every cube has cubes behind it along -x, -y and -z (a down-set)", down)
+    partial, covered, faces = face_coverage(memoize(lambda c: occupied_new(c, on)))
+    check("stack: at rest, every exposed face is seen whole (no triangles)",
+          partial == 0 and covered == 0, f"{faces} faces, {partial} partly hidden, {covered} hidden")
+    old_on = make_switch(2, FILL)
+    partial, covered, faces = face_coverage(memoize(lambda c: occupied_old(c, old_on)))
+    check("stack: the previous random fill showed cut faces (expected before the fix)",
+          partial > 0, f"{partial} of {faces} faces partly hidden")
 
 
 # ---- moves and colours --------------------------------------------------------
@@ -518,6 +633,7 @@ def main():
     test_geometry(rng)
     test_bound(rng)
     test_scene(rng)
+    test_stack()
     test_colours(rng)
     previous_colouring_is_illegal(rng)
     test_cycle(rng)

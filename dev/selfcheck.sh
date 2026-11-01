@@ -7,6 +7,9 @@
 #   2  the move the geometry animates is the move colour undoes
 #   3  march cost: no ray runs out of steps (max grey = most steps used)
 #   4  every visible cubie is a rigid copy of one solved cubie
+#   6  with nothing turning, no visible face is partly covered by a cube
+#      in front of it: no triangles, only whole faces
+#   6x the same check on the previous random fill: expected to FAIL
 #   5  both loops are seamless: the picture one cube loop later (time +
 #      4189.5 s) and one drift loop later (drift + 1024) is the same picture,
 #      while two ordinary frames 1/24 s apart already differ by a few percent
@@ -18,9 +21,11 @@ rm -rf "$out"; mkdir -p "$out"
 times=${SELFCHECK_TIMES:-"2.37 11.9 40.2 3600.5 46080.7"}
 W=${SELFCHECK_W:-1600}; H=${SELFCHECK_H:-900}
 status=0
-for mode in 1 1x 2 3 4; do
+for mode in 1 1x 2 3 4 6 6x; do
   case $mode in
     1x) defs=(-DOMACUBE_DEBUG=1 -DOMACUBE_NO_FAR_BOUND) ;;
+    6)  defs=(-DOMACUBE_DEBUG=6 -DOMACUBE_STATIC) ;;
+    6x) defs=(-DOMACUBE_DEBUG=6 -DOMACUBE_STATIC -DOMACUBE_OLD_FILL) ;;
     *)  defs=(-DOMACUBE_DEBUG=$mode) ;;
   esac
   qsb=$out/mode-$mode.qsb
@@ -30,7 +35,7 @@ for mode in 1 1x 2 3 4; do
     dev/preview.sh "$dir" 1 24 "$t" "$W" "$H" "$qsb" >/dev/null
   done
   echo "== self-check $mode"
-  if [ "$mode" = 1x ]; then
+  if [ "$mode" = 1x ] || [ "$mode" = 6x ]; then
     /usr/bin/python3 -I tools/png-stats.py "$out"/mode-$mode-t*/f00000.png || true
   else
     /usr/bin/python3 -I tools/png-stats.py "$out"/mode-$mode-t*/f00000.png || status=1

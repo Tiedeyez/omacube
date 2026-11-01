@@ -22,8 +22,11 @@ Nothing. The plugin creates no files, folders, caches or settings.
 | `shaders/omacube.frag.qsb` (in the plugin folder) | Qt's `ShaderEffect` loads it | The compiled shader that draws the background |
 | The focused workspace ID, each monitor's active workspace, and whether that workspace has a fullscreen window | Quickshell's built-in `Quickshell.Hyprland` module, from Hyprland's event socket | The 120-degree turn on a workspace switch, and pausing while a fullscreen window covers the screen |
 | The list of screens | `Quickshell.screens` | One background surface per screen |
+| `~/.local/state/omarchy/current/theme/colors.toml` | Quickshell's `FileView`, the same way Omarchy's own shell reads it | The sticker and plastic colours. Only `key = "#rrggbb"` lines are used, and only within the first 64 KiB and 512 lines; everything else is ignored |
+| `~/.local/state/omarchy/current/theme.name` | `FileView`, watched for changes; its content is never used | `omarchy theme set` rewrites it after switching themes, which tells the plugin to read `colors.toml` again |
+| `HOME` | `Quickshell.env` | To build the two paths above |
 
-It does not read your files, your wallpaper, your theme, environment variables, the clipboard, window titles or window contents.
+It does not read your other files, your wallpaper, other environment variables, the clipboard, window titles or window contents.
 
 ## What it shows
 
@@ -45,6 +48,8 @@ These are in the repository but run only if you run them yourself:
 - `dev/preview.sh` runs `tools/build-shader.sh` (unless you pass a compiled shader), then `/usr/bin/qs -p dev/preview.qml` for up to 300 seconds. That shows a 1x1 click-through surface on the `bottom` layer and saves numbered PNG frames to `./frames/`, or to the folder you pass as the first argument. `dev/preview.qml` reads only its own `OMACUBE_*` environment variables.
 - `dev/selfcheck.sh` builds debug versions of the shader into `./frames/selfcheck/`, renders them with `dev/preview.sh`, and counts failing pixels with `/usr/bin/python3 -I tools/png-stats.py`. It writes only inside `./frames/`.
 - `tools/check-math.py` and `tools/png-stats.py` are Python standard-library scripts. They read only the PNG files you name, write nothing, and start no processes.
+- `tools/check-palette.mjs` is a Node script. It reads `Palette.js`, the Omacube theme's `colors.toml`, and the `colors.toml` of each installed theme (in `/usr/share/omarchy/themes/` and `~/.config/omarchy/themes/`, or the folders you name). It writes nothing and starts no processes.
+- `dev/preview.qml` reads the `colors.toml` you point `OMACUBE_THEME` at, if any.
 - `theme/omacube/` is a plain Omarchy theme: `colors.toml`, `hyprland.lua` (border colours, rounding, animation curves), `icons.theme`, the stock Omarchy wallpaper and unlock art recoloured, and `preview.png`. It's used only if you copy it into `~/.config/omarchy/themes/` and select it. Its `hyprland.lua` changes Hyprland settings while the theme is active, and those changes are gone when you switch themes.
 
 ## What it costs
@@ -58,9 +63,12 @@ Tiedeyez, MIT licence (see [LICENSE](LICENSE)).
 ## Check it yourself
 
 ```bash
-# the running plugin has no process, file, network or env access:
-grep -nE "Process|FileView|execDetached|XMLHttpRequest|Socket|Quickshell.env|saveToFile" Service.qml
+# the running plugin starts no processes, opens no sockets and writes nothing:
+grep -nE "Process|execDetached|XMLHttpRequest|Socket|saveToFile|setText" Service.qml Palette.js
 # expected: no output
+
+# its only file reads are the two theme files listed above:
+grep -nE "FileView|path:|Quickshell.env" Service.qml
 
 # rebuild the shader from source and compare:
 tools/build-shader.sh && git status --short shaders/

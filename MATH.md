@@ -26,9 +26,26 @@ While a layer turns:
 
 `check-math.py` compares this against all 27 cubies placed explicitly, at 10,000 random points and random turns, including the ~10% overshoot. Outside the cube the two agree exactly (error 0), and points inside always read as inside.
 
-## 3. The stack, and why the march can't skip a cube
+## 3. The stack: whole faces only
 
-Cubes sit on a lattice with pitch 3, so neighbours touch. A cell holds a cube if its ids sum to 0 or less. In the top four layers, each cell is filled with probability 0.74. Those gaps make the stair-stepped hexagonal stars.
+Cubes sit on a lattice with pitch 3, so neighbours touch. Cells whose ids sum to more than 0 are empty, and cells below −3 are full. In the four layers between, each cell is switched on at random (chance 0.92). A cell holds a cube only if every cell of its *down-cone* inside those layers is switched on: the cells `id − (a, b, c)` with `a, b, c ≥ 0`.
+
+That rule makes the stack a **down-set**: whenever a cell holds a cube, so do the cells behind it along −x, −y and −z. Seen down the diagonal, a down-set shows only whole faces, never pieces of one. The reason:
+
+1. A face is exposed when the cell in front of it is empty.
+2. Every cell that could cover any part of that face lies further along all three axes than that empty cell.
+3. In a down-set, a cell further along than an empty cell is itself empty.
+
+So nothing can cover part of an exposed face. The visible surface is a lozenge tiling: towers, staircases and hexagonal stars, made of whole cubes.
+
+**This was a real bug.** The earlier version filled those top layers independently at random. That left cubes sitting over holes, and through the holes you saw faces cut diagonally: triangles. The evidence:
+
+- In `check-math.py`, rays are cast toward the viewer from 25 points across every exposed face and tested exactly against every nearby cube. With the new rule, 0 of 257 exposed faces are partly covered. With the old fill, 45 of 413 were.
+- On the GPU (self-check 6, with nothing turning), any visible pixel on a face that has a cube placed to cover part of it is marked: 0 such pixels with the new rule, 42,000–71,000 per frame with the old fill.
+
+Where several cubes sit side by side in one plane, the sticker margin is a little wider on the sides where one cube meets the next, so each cube still reads on its own.
+
+## 4. Why the march can't skip a cube
 
 The shader finds the distance to the nearest cube by measuring 8 cells exactly: the cell containing the point, plus its neighbours on the sides the point is closest to.
 
@@ -43,9 +60,9 @@ With the cap, the estimate never exceeds the true distance. Sphere tracing moves
 
 Rays start just above the stack. No cube point reaches above coordinate sum `R·√3 = 4.5`, and rays start at 4.6.
 
-A ray that runs alongside a face tumbled almost edge-on to the view moves in tiny steps. Typical rays hit in about 9 steps; the worst seen took about 216, so the budget is 256. If a ray still runs out within one pixel of a surface, it counts as a hit, since it's a silhouette pixel. Self-check 3 renders the step counts and finds no ray that runs out.
+A ray that runs alongside a face tumbled almost edge-on to the view moves in tiny steps. Typical rays hit in about 14 steps; the worst seen took about 217, so the budget is 256. If a ray still runs out within one pixel of a surface, it counts as a hit, since it's a silhouette pixel. Self-check 3 renders the step counts and finds no ray that runs out.
 
-## 4. Real cube states
+## 5. Real cube states
 
 Every cube is a legal puzzle state: a solved cube put through its own scramble of 0–20 moves. A move is a quarter turn of one layer (-1, 0 or 1 on an axis) or of the whole cube, in either direction. No two consecutive moves share an axis, so a move never cancels the one before.
 
@@ -64,7 +81,7 @@ On the GPU, self-check 4 undoes the moves for each visible cubie and confirms it
 
 The colour scheme is the standard one: white opposite yellow, red opposite orange, green opposite blue. With white up and green in front, red is on the right.
 
-## 5. Turning on time
+## 6. Turning on time
 
 Each cube runs a 14-slot cycle: three moves, four slots of rest, the same three moves undone, four more slots of rest.
 
@@ -73,7 +90,7 @@ Each cube runs a 14-slot cycle: three moves, four slots of rest, the same three 
 - **Shared moves.** The shape and the colours get their moves from the same function. Self-check 2 confirms on the GPU that the move being animated is always the move the colours will undo: 0 failing pixels.
 - **Rounding.** The slot position is computed with a division, which can round a hair outside `[0, 14)`. The shader folds it back in.
 
-## 6. Loops with no seam
+## 7. Loops with no seam
 
 The shader works in 32-bit floats, so its clock has to wrap. Two loops are arranged so that wrapping changes nothing on screen.
 
@@ -91,14 +108,34 @@ The shader works in 32-bit floats, so its clock has to wrap. Two loops are arran
 
 The tiny remainder is float rounding, far below normal motion. Keeping the cube loop short keeps the shader's time precise to about half a millisecond.
 
-## 7. Hashing
+## 8. Hashing
 
 Every random choice comes from a hash of whole numbers: the cell id modulo 1024, a cube id, a cycle number, and a move index. All of them are small enough to be exact in a 32-bit float. The hash is Dave Hoskins' "Hash without Sine" (MIT). It uses no trigonometry, so it doesn't depend on how accurately a GPU computes `sin()`. It also doesn't magnify tiny rounding differences the way the common `fract(sin(x) × 43758.5)` does: there, a one-bit difference in `x` can change the result completely.
 
-## 8. Edges
+## 9. Edges
 
 Sticker edges are antialiased over exactly one screen pixel. The projection is orthographic, so a one-pixel step on screen moves the hit point by a fixed amount within the face plane: `D = e − fw·(n·e)/(n·fw)`. The shader measures how much the sticker's edge distance changes over that step, and blends over it. This keeps lines equally sharp on all three face orientations and at any screen resolution. Colours blend in linear light and convert back to sRGB.
 
-## 9. Portability
+## 10. Portability
 
 Qt may run the shader as GLSL ES 1.00 (it did on an NVIDIA driver). That version has no bitwise operators, and it doesn't guarantee indexing a vector with a variable. The shader avoids both. The package also includes GLSL ES 3.00, desktop GLSL 1.20 and 1.50, HLSL and Metal versions, so Qt can pick whichever matches the graphics API.
+
+## 11. Colours from the theme
+
+The sticker colours come from the active Omarchy theme, in `Palette.js`. Each sticker takes the theme colour with the same role:
+
+| Sticker | Theme colour |
+|---|---|
+| red, orange | `red`, `orange` |
+| white | `foreground` |
+| yellow | `yellow` |
+| green, blue | `green`, `blue` |
+| plastic | `background` |
+
+So opposite faces stay opposite, and every cube remains a legal state in any palette.
+
+- **A colour used twice.** If a theme uses one colour for two roles, or two nearly identical ones, the later role borrows a spare colour from the same theme (cyan, magenta, accent, or a bright variant). Truly monochrome themes keep their own shades.
+- **Exact colours.** A theme can set the cube's colours exactly with optional `omacube_*` keys, which Omarchy itself ignores. The Omacube theme uses them for the classic cube.
+- **Theme switches.** The plugin re-reads the colours when `omarchy theme set` writes the new theme's name, and crossfades over 0.9 s.
+
+`node tools/check-palette.mjs` runs the plugin's own `Palette.js` against every installed theme. It also checks odd input (empty, garbage, oversized, CRLF), 2,000 random palettes, and that the Omacube theme gives exactly the classic cube.
