@@ -5,7 +5,7 @@ An animated desktop background for Omarchy: an endless isometric stack of 3x3 pu
 ![Omacube](preview.png)
 
 - **An endless stack.** The view looks straight down a cube's diagonal at an infinite pile of cubes with random gaps, so the top layers form interlocking hexagonal stars and staircases. The field drifts slowly past.
-- **Real layer turns.** Each cube runs on its own clock. It makes three moves, each a single layer turn or a whole-cube tumble, rests, then undoes them in reverse. Sticker colours travel with the turning layers.
+- **Real cubes, real turns.** Every cube is a legal puzzle state: a solved cube put through its own scramble. Each one runs on its own clock. It makes three moves, each a single layer turn or a whole-cube tumble, rests, then undoes them in reverse. Sticker colours travel with the turning layers.
 - **Workspaces turn the stack.** Every workspace switch rolls the whole stack 120 degrees with a flick-and-settle overshoot. That's the isometric view's own symmetry, so the pattern clicks back into line like a cube turn.
 
 Everything is drawn by one GPU fragment shader. The plugin reads no files, runs no processes and makes no network connections. See [DISCLOSURE.md](DISCLOSURE.md).
@@ -44,12 +44,20 @@ Omarchy only loads a theme's `hyprland.lua` (the animations and border) from a t
 
 - The shader renders at 75% of screen resolution and redraws 24 times a second. Both settings are at the top of `Service.qml`.
 - It stops redrawing while a fullscreen window covers the screen.
-- Any animated wallpaper makes the compositor repaint the whole screen on every frame, including blur behind translucent windows. On an RTX 4070 SUPER at 3440x1440 that cost about 14 W more than a static wallpaper, and the shader's resolution made no measurable difference. Expect a bigger relative cost on integrated graphics. On a weak GPU, lower `renderScale` and `fps` in `Service.qml`.
+- Any animated wallpaper makes the compositor repaint the whole screen on every frame, including blur behind translucent windows. On an RTX 4070 SUPER at 3440x1440, GPU power went from about 6.5 W to about 16.5 W with Omacube enabled. Most of that is the repainting; lowering the shader's resolution made no measurable difference. Expect a bigger relative cost on integrated graphics. On a weak GPU, lower `renderScale` and `fps` in `Service.qml`.
+- The animation loops seamlessly: the cubes every 70 minutes, the drifting field every 12.8 hours. Nothing jumps when either loop wraps.
+
+## How it's checked
+
+[MATH.md](MATH.md) explains the maths: the isometric camera, the distance function that keeps the ray march from stepping through a turning cube, real cube states, timing, seamless loops, hashing and antialiasing. Two sets of checks back it up:
+
+- `python3 tools/check-math.py` re-derives every claim in plain Python, using brute force where the shader takes shortcuts. It needs only the standard library.
+- `dev/selfcheck.sh` builds debug versions of the shader and renders them on your GPU. Each check paints failing pixels magenta, then counts them. It needs a running Wayland session with Quickshell.
 
 ## Development
 
 - `shaders/omacube.frag` is the shader source. `shaders/omacube.frag.qsb` is the compiled form Qt loads. Rebuild it with `tools/build-shader.sh` (needs `qt6-shadertools`).
-- `dev/preview.sh [outdir] [frames] [fps] [t0] [width] [height]` renders PNG frames without installing the plugin.
+- `dev/preview.sh [outdir] [frames] [fps] [t0] [width] [height] [qsb]` renders PNG frames without installing the plugin.
 - After editing `Service.qml`, run `omarchy restart shell`.
 
 ## Credits

@@ -41,13 +41,15 @@ None. There are no listening sockets, no outbound connections, no telemetry, no 
 
 These are in the repository but run only if you run them yourself:
 
-- `tools/build-shader.sh` runs `/usr/lib/qt6/bin/qsb` to rebuild `shaders/omacube.frag.qsb` from `shaders/omacube.frag`. It writes only that file.
-- `dev/preview.sh` runs `tools/build-shader.sh`, then `/usr/bin/qs -p dev/preview.qml` for up to 300 seconds. That shows a 1x1 click-through surface on the `bottom` layer and saves numbered PNG frames to `./frames/`, or to the folder you pass as the first argument.
+- `tools/build-shader.sh` runs `/usr/lib/qt6/bin/qsb` to rebuild `shaders/omacube.frag.qsb` from `shaders/omacube.frag`. It writes only that file, or the output path you pass it.
+- `dev/preview.sh` runs `tools/build-shader.sh` (unless you pass a compiled shader), then `/usr/bin/qs -p dev/preview.qml` for up to 300 seconds. That shows a 1x1 click-through surface on the `bottom` layer and saves numbered PNG frames to `./frames/`, or to the folder you pass as the first argument. `dev/preview.qml` reads only its own `OMACUBE_*` environment variables.
+- `dev/selfcheck.sh` builds debug versions of the shader into `./frames/selfcheck/`, renders them with `dev/preview.sh`, and counts failing pixels with `/usr/bin/python3 -I tools/png-stats.py`. It writes only inside `./frames/`.
+- `tools/check-math.py` and `tools/png-stats.py` are Python standard-library scripts. They read only the PNG files you name, write nothing, and start no processes.
 - `theme/omacube/` is a plain Omarchy theme: `colors.toml`, `hyprland.lua` (border colours, rounding, animation curves), `icons.theme`, the stock Omarchy wallpaper and unlock art recoloured, and `preview.png`. It's used only if you copy it into `~/.config/omarchy/themes/` and select it. Its `hyprland.lua` changes Hyprland settings while the theme is active, and those changes are gone when you switch themes.
 
 ## What it costs
 
-An animated background makes the compositor repaint every frame, including blur behind translucent windows. In testing on an RTX 4070 SUPER at 3440x1440, GPU power went from about 7 W to about 21 W with the plugin enabled. Redrawing stops while a fullscreen window covers the screen. See the README for how to lower the frame rate and resolution.
+An animated background makes the compositor repaint every frame, including blur behind translucent windows. In testing on an RTX 4070 SUPER at 3440x1440, GPU power went from about 6.5 W to about 16.5 W with the plugin enabled. Redrawing stops while a fullscreen window covers the screen. See the README for how to lower the frame rate and resolution.
 
 ## Maintainer and licence
 

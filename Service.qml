@@ -22,22 +22,34 @@ Item {
   readonly property real renderScale: 0.75
   // Redraws per second. The shader only redraws when the clock ticks.
   readonly property int fps: 24
-  // Seconds for the field to drift by one cube.
-  readonly property real secondsPerLevel: 16
-  // Classic sticker colours: +x, -x, +y, -y, +z, -z
+  // Solved-cube sticker colours: +x, -x, +y, -y, +z, -z. With white up and
+  // green in front, red is on the right: the standard colour scheme.
   readonly property var stickers: ["#c41e3a", "#ff5800", "#f4f4f4", "#ffd500", "#009e60", "#0051ba"]
   readonly property color plastic: "#0b0b0d"
   readonly property color voidColor: "#040406"
 
-  // ---- shared clock --------------------------------------------------------
-  // time wraps every 6912 s so float precision never degrades; once per
-  // wrap (about two hours) the field jumps to a fresh patch of cubes.
+  // ---- one seamless loop ---------------------------------------------------
+  // Every cube's cycle lasts 13.3 s * m / 8 for some m in {6,7,8,9,10,12},
+  // and 4189.5 s (about 70 min) is a whole number of cycles for every m, so
+  // the shader's clock wraps there with nothing changing on screen. The field
+  // drifts 1024 lattice steps every 11 of those loops (about 12.8 h), and the
+  // shader's cell hash repeats every 1024 cells, so the drift wraps
+  // seamlessly too. Short loops keep the 32-bit time in the shader precise.
+  readonly property real cubeLoop: 4189.5
+  readonly property real driftLoop: 46084.5
   property real clock: 0
-  readonly property real wrapSeconds: 6912
-  property real zoomKick: 0
-  property real spinKick: 0
-  Behavior on zoomKick { NumberAnimation { duration: 1100; easing.type: Easing.OutBack; easing.overshoot: 1.3 } }
-  Behavior on spinKick { NumberAnimation { duration: 1100; easing.type: Easing.OutBack; easing.overshoot: 1.6 } }
+
+  // Net workspace steps; turnPos eases towards it. One step rolls the view
+  // 120 degrees (the isometric view's own symmetry) and slides the field
+  // half a lattice step. Both wrap with no visible jump: the roll every
+  // 3 steps (360 degrees), the slide every 1024 lattice steps.
+  property int turns: 0
+  property real turnPos: turns
+  Behavior on turnPos { NumberAnimation { duration: 1100; easing.type: Easing.OutBack; easing.overshoot: 1.6 } }
+
+  function wrap(x, m) { return ((x % m) + m) % m }
+  readonly property real spin: 2.0943951024 * wrap(turnPos, 3)
+  readonly property real drift: wrap(clock / driftLoop * 1024 + 0.5 * turnPos, 1024)
 
   readonly property bool anyVisible: {
     var ws = screenWindows.instances
@@ -57,11 +69,11 @@ Item {
       var now = Date.now()
       var dt = Math.min((now - last) / 1000, 0.25)
       last = now
-      root.clock = (root.clock + dt) % root.wrapSeconds
+      root.clock = (root.clock + dt) % root.driftLoop
     }
   }
 
-  // ---- workspace twist -----------------------------------------------------
+  // ---- workspace turn --------------------------------------------------------
   property int lastWorkspace: -1
   Connections {
     target: Hyprland
@@ -71,13 +83,8 @@ Item {
     var ws = Hyprland.focusedWorkspace
     if (!ws) return
     var id = ws.id
-    if (lastWorkspace !== -1 && id !== lastWorkspace && id > 0 && lastWorkspace > 0) {
-      var dir = id > lastWorkspace ? 1 : -1
-      zoomKick += dir
-      spinKick += dir * 2.0943951   // 120 degrees: the isometric view's own symmetry
-      // keep the kick offsets small so float precision stays exact
-      if (Math.abs(zoomKick) > 300) zoomKick = 0
-    }
+    if (lastWorkspace !== -1 && id !== lastWorkspace && id > 0 && lastWorkspace > 0)
+      turns += id > lastWorkspace ? 1 : -1
     lastWorkspace = id
   }
   Component.onCompleted: workspaceMoved()
@@ -105,19 +112,22 @@ Item {
       mask: Region {}
 
       Item {
+        id: canvas
         anchors.fill: parent
+        readonly property int texW: Math.max(2, Math.round(width * root.renderScale))
+        readonly property int texH: Math.max(2, Math.round(height * root.renderScale))
         layer.enabled: true
         layer.smooth: true
-        layer.textureSize: Qt.size(Math.max(2, Math.round(width * root.renderScale)),
-                                   Math.max(2, Math.round(height * root.renderScale)))
+        layer.textureSize: Qt.size(texW, texH)
 
         ShaderEffect {
           anchors.fill: parent
           fragmentShader: Qt.resolvedUrl("shaders/omacube.frag.qsb")
-          property real time: root.clock
-          property real zoom: root.clock / root.secondsPerLevel + root.zoomKick
-          property real spin: root.spinKick
+          property real time: root.clock % root.cubeLoop
+          property real drift: root.drift
+          property real spin: root.spin
           property real aspect: width / Math.max(1, height)
+          property real texel: 1 / canvas.texH
           property color c0: root.stickers[0]
           property color c1: root.stickers[1]
           property color c2: root.stickers[2]
