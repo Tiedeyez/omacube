@@ -20,7 +20,7 @@ Nothing. The plugin creates no files, folders, caches or settings.
 | What | How | Why |
 |---|---|---|
 | `shaders/omacube.frag.qsb` (in the plugin folder) | Qt's `ShaderEffect` loads it | The compiled shader that draws the background |
-| The focused workspace ID, each monitor's active workspace, and whether that workspace has a fullscreen window | Quickshell's built-in `Quickshell.Hyprland` module, from Hyprland's event socket | The twist on a workspace switch, and pausing while a fullscreen window covers the screen |
+| The focused workspace ID, each monitor's active workspace, and whether that workspace has a fullscreen window | Quickshell's built-in `Quickshell.Hyprland` module, from Hyprland's event socket | The 120-degree turn on a workspace switch, and pausing while a fullscreen window covers the screen |
 | The list of screens | `Quickshell.screens` | One background surface per screen |
 
 It does not read your files, your wallpaper, your theme, environment variables, the clipboard, window titles or window contents.

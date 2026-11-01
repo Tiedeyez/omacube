@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "author": "Tiedeyez",
   "license": "MIT",
-  "description": "An animated desktop background of endlessly nested 3x3 puzzle cubes. The view dives forever into a cube corner where every corner piece is another whole cube; each cube scrambles itself with real layer turns and then solves itself, inside a drifting field of tumbling cubes. Switching workspaces twists the view 120 degrees and dives one level deeper. One GPU fragment shader, no files, processes or network.",
+  "description": "An animated desktop background of an endless isometric stack of 3x3 puzzle cubes, drawn flat in sticker colours. Cubes turn their layers and tumble on their own clocks while the field drifts slowly past, and every workspace switch rolls the whole stack 120 degrees so it clicks back into line like a cube turn. One GPU fragment shader, no files, processes or network.",
   "kinds": [
     "service"
   ],

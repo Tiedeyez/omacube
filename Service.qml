@@ -5,10 +5,11 @@ import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Wayland
 
-// Omacube: an animated desktop background of endlessly nested 3x3 puzzle
-// cubes, drawn by one fragment shader (shaders/omacube.frag) on a layer-shell
-// surface per screen. Every workspace switch twists the view 120 degrees and
-// dives one level deeper (or back out, when you go to a lower workspace).
+// Omacube: an animated desktop background of an endless isometric stack of
+// 3x3 puzzle cubes that turn their layers and tumble, drawn flat by one
+// fragment shader (shaders/omacube.frag) on a layer-shell surface per screen.
+// Every workspace switch rolls the whole stack 120 degrees, the isometric
+// view's own symmetry, so the pattern clicks back into line like a cube turn.
 //
 // Nothing here reads or writes files, runs processes or touches the network.
 // It sits on the "bottom" layer (above the stock wallpaper, below windows)
@@ -18,10 +19,10 @@ Item {
 
   // ---- tuning ------------------------------------------------------------
   // Fraction of screen resolution the shader renders at (then upscaled).
-  readonly property real renderScale: 0.4
+  readonly property real renderScale: 0.75
   // Redraws per second. The shader only redraws when the clock ticks.
   readonly property int fps: 24
-  // Seconds to dive one level (x3) deeper.
+  // Seconds for the field to drift by one cube.
   readonly property real secondsPerLevel: 16
   // Classic sticker colours: +x, -x, +y, -y, +z, -z
   readonly property var stickers: ["#c41e3a", "#ff5800", "#f4f4f4", "#ffd500", "#009e60", "#0051ba"]
@@ -29,9 +30,8 @@ Item {
   readonly property color voidColor: "#040406"
 
   // ---- shared clock --------------------------------------------------------
-  // time wraps every 6912 s (a multiple of the 18 s move cycle and of the
-  // 16 s level) so float precision never degrades; once per wrap the cubes'
-  // scramble states and the camera wobble reset.
+  // time wraps every 6912 s so float precision never degrades; once per
+  // wrap (about two hours) the field jumps to a fresh patch of cubes.
   property real clock: 0
   readonly property real wrapSeconds: 6912
   property real zoomKick: 0
@@ -74,7 +74,7 @@ Item {
     if (lastWorkspace !== -1 && id !== lastWorkspace && id > 0 && lastWorkspace > 0) {
       var dir = id > lastWorkspace ? 1 : -1
       zoomKick += dir
-      spinKick += dir * 2.0943951   // 120 degrees: the corner's own symmetry
+      spinKick += dir * 2.0943951   // 120 degrees: the isometric view's own symmetry
       // keep the kick offsets small so float precision stays exact
       if (Math.abs(zoomKick) > 300) zoomKick = 0
     }

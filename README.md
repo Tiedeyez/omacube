@@ -1,13 +1,12 @@
 # Omacube
 
-An animated desktop background for [Omarchy](https://omarchy.org): an endless dive into the corner of a 3x3 puzzle cube, where every corner piece is another whole cube, all the way down.
+An animated desktop background for Omarchy: an endless isometric stack of 3x3 puzzle cubes, drawn flat in sticker colours with black lines, like a vector illustration that never stops moving.
 
 ![Omacube](preview.png)
 
-- **Infinite zoom.** The view falls forever into a cube corner. Each corner cubie is a cube one third the size, so the picture repeats at every level and the dive never ends.
-- **Real layer turns.** Every cube scrambles itself with eight layer turns, rests, then plays the moves back and solves itself. Sticker colours travel with the turning layers, so what you see is a real puzzle state.
-- **Workspaces twist the cube.** Moving to a higher workspace twists the view 120 degrees and dives one level deeper with a click-and-settle overshoot. Moving to a lower one twists back out.
-- **A field of cubes.** Behind the main fractal, a sparse lattice of small cubes tumbles past.
+- **An endless stack.** The view looks straight down a cube's diagonal at an infinite pile of cubes with random gaps, so the top layers form interlocking hexagonal stars and staircases. The field drifts slowly past.
+- **Real layer turns.** Each cube runs on its own clock. It makes three moves, each a single layer turn or a whole-cube tumble, rests, then undoes them in reverse. Sticker colours travel with the turning layers.
+- **Workspaces turn the stack.** Every workspace switch rolls the whole stack 120 degrees with a flick-and-settle overshoot. That's the isometric view's own symmetry, so the pattern clicks back into line like a cube turn.
 
 Everything is drawn by one GPU fragment shader. The plugin reads no files, runs no processes and makes no network connections. See [DISCLOSURE.md](DISCLOSURE.md).
 
@@ -30,7 +29,7 @@ Your normal wallpaper shows again as soon as the plugin is disabled. Nothing els
 
 ## Optional companion theme
 
-`theme/omacube/` is a matching Omarchy theme. It has a black-plastic palette with the six sticker colours, a sticker-gradient window border, and "layer click" window and workspace animations: a fast flick, a small overshoot and a settle. It also turns on Omarchy's workspace slide animation, so windows slide sideways while the background twists.
+`theme/omacube/` is a matching Omarchy theme. It has a black-plastic palette with the six sticker colours, a sticker-gradient window border, and "layer click" window and workspace animations: a fast flick, a small overshoot and a settle. It also turns on Omarchy's workspace slide animation, so windows slide sideways while the stack turns.
 
 The plugin doesn't install it for you. To use it:
 
@@ -43,7 +42,7 @@ Omarchy only loads a theme's `hyprland.lua` (the animations and border) from a t
 
 ## Performance
 
-- The shader renders at 40% of screen resolution and redraws 24 times a second. Both settings are at the top of `Service.qml`.
+- The shader renders at 75% of screen resolution and redraws 24 times a second. Both settings are at the top of `Service.qml`.
 - It stops redrawing while a fullscreen window covers the screen.
 - Any animated wallpaper makes the compositor repaint the whole screen on every frame, including blur behind translucent windows. On an RTX 4070 SUPER at 3440x1440 that cost about 14 W more than a static wallpaper, and the shader's resolution made no measurable difference. Expect a bigger relative cost on integrated graphics. On a weak GPU, lower `renderScale` and `fps` in `Service.qml`.
 

@@ -1,14 +1,12 @@
 #version 440
-// Omacube: an endless zoom into the corner of a 3x3x3 twisty puzzle cube.
+// Omacube: an endless isometric stack of 3x3x3 puzzle cubes, drawn flat.
 //
-// Every cube's corner cubie at (1,1,1) is itself a whole cube, one third the
-// size, so all cubes share the outer corner F = (1.5, 1.5, 1.5). The camera
-// looks at F and the scene scales up about F; after one level (x3) the image
-// repeats exactly, which gives a seamless infinite zoom.
-//
-// Each cube scrambles itself with 8 real layer turns, rests, then plays the
-// inverse sequence to solve itself. Sticker colours are derived by undoing the
-// completed turns, so colours travel with the turning layers.
+// The camera is orthographic and looks straight down the (1,1,1) diagonal,
+// which turns a 3D lattice of cubes into interlocking hexagonal stars. Most
+// cubes sit still; each one, on its own clock, makes three moves (a layer
+// turn or a whole-cube tumble), rests, then undoes them in reverse. Sticker
+// colours are found by undoing the completed moves, so colours travel with
+// the turning layers.
 
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;
@@ -17,39 +15,34 @@ layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
     float qt_Opacity;
     float time;       // animation clock, seconds (wrapped by the host)
-    float zoom;       // zoom position in levels; fract = phase within a level
-    float spin;       // camera roll, radians
+    float zoom;       // drift along the field, in cube pitches
+    float spin;       // view roll, radians (120 degree steps line up)
     float aspect;     // width / height
-    vec4 c0;          // sticker colour for +x faces
-    vec4 c1;          // -x
-    vec4 c2;          // +y
-    vec4 c3;          // -y
-    vec4 c4;          // +z
-    vec4 c5;          // -z
-    vec4 bodyColor;   // cubie plastic
-    vec4 bgColor;     // anything a ray misses
+    vec4 c0;          // sticker colours
+    vec4 c1;
+    vec4 c2;
+    vec4 c3;
+    vec4 c4;
+    vec4 c5;
+    vec4 bodyColor;   // cube plastic and the lines between stickers
+    vec4 bgColor;     // empty space
 };
 
 const float PI = 3.14159265;
-const float H = 0.465;          // cubie half size (pitch 1.0)
-const float R = 0.075;          // cubie corner rounding
-const vec3 F = vec3(1.5);       // shared corner, the zoom fixed point
-const int LMIN = -3;            // outer levels drawn around the current one
-const int LMAX = 4;             // inner levels drawn before the tiny tip is capped
+const float P = 3.0;            // lattice pitch: cubes touch, like the stack
+const float H = 0.5;            // cubie half size (cube spans -1.5 .. 1.5)
+const float VIEW = 15.0;         // half the screen height, in world units
+const float FILL = 0.74;        // fraction of lattice cells holding a cube
 
-const float SLOT = 0.9;         // seconds per move slot
-const float TURN = 0.62;        // fraction of a slot spent turning
-const float CYCLE = 20.0;       // 8 scramble, 2 rest, 8 solve, 2 rest
+const float SLOT = 0.95;        // seconds per slot (scaled per cube)
+const float TURN = 0.6;         // fraction of a slot spent moving
+const float CYCLE = 14.0;       // 3 moves, 4 rest, 3 undo, 4 rest
 
 float hash1(float x) { return fract(sin(x * 127.1 + 311.7) * 43758.5453); }
+float hash3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 
-float sdRBox(vec3 p, float b, float r) {
-    vec3 q = abs(p) - vec3(b - r);
-    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
-}
-
-float sdBox(vec3 p, vec3 b) {
-    vec3 q = abs(p) - b;
+float sdBox(vec3 p, float b) {
+    vec3 q = abs(p) - vec3(b);
     return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
 }
 
@@ -60,214 +53,120 @@ vec3 rotA(vec3 p, int a, float ang) {
     return vec3(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
 }
 
-// Move j of a scramble: axis 0..2, layer -1 or 0 (never the layer that holds
-// the nested corner), direction +-1.
+// Move j of a cube's cycle: axis 0..2; layer -1, 0, 1, or 2 = the whole cube.
 void moveOf(float seed, int j, out int axis, out float layer, out float dir) {
     float h = hash1(seed + float(j) * 17.31);
-    int m = int(floor(h * 12.0));
-    axis = m - (m / 3) * 3;
-    layer = ((m / 3) - ((m / 3) / 2) * 2) == 0 ? -1.0 : 0.0;
-    dir = m < 6 ? 1.0 : -1.0;
+    axis = int(floor(h * 3.0));
+    float h2 = hash1(seed * 1.7 + float(j) * 5.13);
+    layer = h2 < 0.4 ? 2.0 : floor(fract(h2 * 7.0) * 3.0) - 1.0;
+    dir = hash1(seed * 2.3 + float(j) * 9.7) < 0.5 ? 1.0 : -1.0;
 }
 
 float easeTurn(float x) {
-    // fast flick with a small overshoot and settle, like a real layer click
+    // fast flick with a small overshoot and settle
     x = clamp(x, 0.0, 1.0);
-    float c1 = 1.9, c3 = c1 + 1.0;
+    float c1 = 1.7, c3 = c1 + 1.0;
     float y = x - 1.0;
     return 1.0 + c3 * y * y * y + c1 * y * y;
 }
 
-// State of cube with absolute id A: how many scramble moves are applied before
-// the current one (pre), and the move in progress (axis, layer, angle).
-void cubeState(float A, out float seed, out int pre, out int axis, out float layer, out float ang) {
-    float tt = time / SLOT + hash1(A * 7.13) * CYCLE;
+float cycleTime(float seed) {
+    float rate = 0.75 + 0.6 * hash1(seed * 3.3);
+    return time / (SLOT * rate) + hash1(seed * 7.13) * CYCLE;
+}
+
+// How many moves are applied (pre) and the move in progress.
+void cubeState(float seed, out int pre, out int axis, out float layer, out float ang) {
+    float tt = cycleTime(seed);
     float cyc = floor(tt / CYCLE);
     float s = tt - cyc * CYCLE;
-    seed = A * 31.7 + cyc * 1.37;
+    float mseed = seed + cyc * 1.37;
     int slot = int(floor(s));
     float f = fract(s);
-    axis = 0; layer = 0.0; ang = 0.0;
+    axis = 0; layer = 0.0; ang = 0.0; pre = 0;
     float dir;
-    if (slot < 8) {                 // scrambling: move j = slot, pre = j
+    if (slot < 3) {
         pre = slot;
-        moveOf(seed, slot, axis, layer, dir);
+        moveOf(mseed, slot, axis, layer, dir);
         ang = dir * easeTurn(f / TURN) * 0.5 * PI;
-    } else if (slot < 10) {         // rest, fully scrambled
-        pre = 8;
-    } else if (slot < 18) {         // solving: undo scramble move 17 - slot
-        int k = 17 - slot;          // 7 .. 0
+    } else if (slot < 7) {
+        pre = 3;
+    } else if (slot < 10) {
+        int k = 9 - slot;              // undo move 2, 1, 0
         pre = k + 1;
-        moveOf(seed, k, axis, layer, dir);
+        moveOf(mseed, k, axis, layer, dir);
         ang = -dir * easeTurn(f / TURN) * 0.5 * PI;
-    } else {                        // rest, solved
-        pre = 0;
     }
 }
 
-float cubie(vec3 q, vec3 c) { return sdRBox(q - c, H, R); }
+float cellSeed(vec3 id) { return hash3(id) * 1000.0 + 0.5; }
+// The stack fills the half-space below a plane facing the camera, with
+// random gaps, so the top layers read as stair-stepped hexagonal stars.
+bool occupied(vec3 id) {
+    float s = id.x + id.y + id.z;
+    if (s > 0.5) return false;
+    return s < -3.5 || hash3(id + 0.37) < FILL;
+}
 
-// Distance to one cube's 26 outer cubies (the corner (1,1,1) is excluded when
-// nested). Layer `layer` on `axis` is turned by `ang`.
-float levelSDF(vec3 q, int axis, float layer, float ang, bool nested, out vec3 cell, out bool moving) {
-    moving = false;
-    vec3 c = clamp(floor(q + 0.5), -1.0, 1.0);
+// Distance to one cube centred at the origin of q.
+float cubeSDF(vec3 q, int axis, float layer, float ang, out vec3 cell, out vec3 lp) {
     bool turning = abs(ang) > 1e-4;
+    if (turning && layer > 1.5) {       // whole cube tumbling
+        vec3 qr = rotA(q, axis, -ang);
+        cell = clamp(floor(qr + 0.5), -1.0, 1.0);
+        lp = qr - cell;
+        return sdBox(lp, H);
+    }
+    vec3 c = clamp(floor(q + 0.5), -1.0, 1.0);
     if (turning && c[axis] == layer) {
-        // nearest static layer on this axis
-        c[axis] = (layer < -0.5) ? 0.0 : (q[axis] > 0.0 ? 1.0 : -1.0);
+        float alt = layer == 0.0 ? (q[axis] > 0.0 ? 1.0 : -1.0) : 0.0;
+        c[axis] = alt;
     }
-    float d;
-    if (nested && c == vec3(1.0)) {
-        d = 1e9;
-        for (int i = 0; i < 3; i++) {
-            vec3 cc = vec3(1.0); cc[i] = 0.0;
-            if (turning && cc[axis] == layer) continue;
-            float di = cubie(q, cc);
-            if (di < d) { d = di; cell = cc; }
-        }
-    } else {
-        d = cubie(q, c); cell = c;
-    }
+    float d = sdBox(q - c, H);
+    cell = c; lp = q - c;
     if (turning) {
         vec3 qr = rotA(q, axis, -ang);
         vec3 cm = clamp(floor(qr + 0.5), -1.0, 1.0);
         cm[axis] = layer;
-        float dm = cubie(qr, cm);
-        if (dm < d) { d = dm; cell = cm; moving = true; }
+        float dm = sdBox(qr - cm, H);
+        if (dm < d) { d = dm; cell = cm; lp = qr - cm; }
     }
     return d;
 }
 
-struct Hit {
-    float A;        // absolute cube id
-    vec3 cell;      // cubie cell (in the frame before the move in progress)
-    vec3 local;     // point relative to that cubie, same frame
-    int axis; float layer; float ang; float seed; int pre;
-};
+struct Hit { vec3 id; vec3 cell; vec3 lp; float seed; int pre; };
 
-
-vec3 stickerColor(int face);
-
-// ---- background: a drifting lattice of tumbling mini cubes ----------------
-mat3 rotXYZ(vec3 a) {
-    vec3 c = cos(a), s = sin(a);
-    mat3 rx = mat3(1, 0, 0, 0, c.x, s.x, 0, -s.x, c.x);
-    mat3 ry = mat3(c.y, 0, -s.y, 0, 1, 0, s.y, 0, c.y);
-    mat3 rz = mat3(c.z, s.z, 0, -s.z, c.z, 0, 0, 0, 1);
-    return rz * ry * rx;
-}
-
-const float CELL = 3.2;
-
-mat3 cellRot(vec3 id) {
-    float h1 = hash1(dot(id, vec3(1.0, 57.0, 113.0)));
-    float h2 = hash1(dot(id, vec3(7.0, 31.0, 89.0)) + 3.1);
-    float h3 = hash1(dot(id, vec3(13.0, 17.0, 71.0)) + 9.7);
-    vec3 a = vec3(h1, h2, h3) * 6.2831 + time * (0.15 + 0.35 * vec3(h2, h3, h1)) * sign(vec3(h3, h1, h2) - 0.5);
-    return rotXYZ(a);
-}
-
-float bgMap(vec3 p, out vec3 id, out vec3 lp) {
-    id = floor(p / CELL + 0.5);
-    vec3 q = p - id * CELL;
-    // keep a sparse field: skip some cells
-    if (hash1(dot(id, vec3(3.0, 11.0, 29.0)) + 0.5) < 0.6) {
-        lp = vec3(9.0);
-        vec3 b = CELL * 0.5 - abs(q);
-        return max(min(b.x, min(b.y, b.z)), 0.0) + 0.3;
-    }
-    lp = cellRot(id) * q;
-    return sdRBox(lp, 0.52, 0.07);
-}
-
-vec3 bgField(vec3 rd, vec3 fw) {
-    vec3 ro = vec3(0.37, 0.71, 0.13) * CELL + fw * time * 0.9;
-    float t = 0.5;
-    vec3 id, lp;
-    bool hit = false;
-    for (int i = 0; i < 40; i++) {
-        float d = bgMap(ro + rd * t, id, lp);
-        if (d < 0.002 * t) { hit = true; break; }
-        t += d;
-        if (t > 45.0) break;
-    }
-    vec3 bg = pow(bgColor.rgb, vec3(2.2));
-    if (!hit) return bg;
-    vec3 al = abs(lp);
-    vec3 nl; vec2 fuv; int face;
-    if (al.x >= al.y && al.x >= al.z) { nl = vec3(sign(lp.x), 0, 0); fuv = lp.yz; face = lp.x > 0.0 ? 0 : 1; }
-    else if (al.y >= al.z)            { nl = vec3(0, sign(lp.y), 0); fuv = lp.xz; face = lp.y > 0.0 ? 2 : 3; }
-    else                              { nl = vec3(0, 0, sign(lp.z)); fuv = lp.xy; face = lp.z > 0.0 ? 4 : 5; }
-    // 3x3 sticker grid on each face
-    vec2 g = fuv / (2.0 * 0.52) * 3.0 + 1.5;
-    vec2 gi = clamp(floor(g), 0.0, 2.0);
-    vec2 gf = g - gi - 0.5;
-    vec2 sq = abs(gf) - vec2(0.3);
-    float sd = length(max(sq, 0.0)) + min(max(sq.x, sq.y), 0.0) - 0.08;
-    float sticker = 1.0 - smoothstep(-0.03, 0.03, sd);
-    // mostly solved, some scrambled stickers
-    float hs = hash1(dot(id, vec3(5.0, 23.0, 61.0)) + float(face) * 3.7 + gi.x * 1.3 + gi.y * 2.9);
-    int sface = hs < 0.7 ? face : int(floor(hash1(hs * 91.0) * 6.0));
-    vec3 sc = pow(stickerColor(sface), vec3(2.2));
-    vec3 alb = mix(pow(bodyColor.rgb, vec3(2.2)), sc, sticker);
-    vec3 n = transpose(cellRot(id)) * nl;
-    vec3 L1 = normalize(vec3(0.55, 0.9, 0.35));
-    float dif = max(dot(n, L1), 0.0);
-    float spec = pow(max(dot(n, normalize(L1 - rd)), 0.0), 60.0) * 0.5 * sticker;
-    vec3 col = alb * (0.18 + 0.9 * dif) + spec;
-    float fog = 1.0 - exp(-t * 0.06);
-    return mix(col * 0.55, bg, fog);
-}
-
-float levelBase() { return floor(zoom); }
-
-// Per-level cube state, computed once per pixel in main() (it depends only on
-// time and level), so the march loop does no hashing or trig for it.
-const int NLEV = LMAX - LMIN + 1;
-float gSeed[NLEV]; float gLayer[NLEV]; float gAng[NLEV]; int gAxis[NLEV]; int gPre[NLEV];
-
-void prepareLevels() {
-    float base = levelBase();
-    for (int i = 0; i < NLEV; i++) {
-        float A = float(LMIN + i) + base;
-        cubeState(A, gSeed[i], gPre[i], gAxis[i], gLayer[i], gAng[i]);
-    }
-}
-
+// Nearest cube among this lattice cell and the 7 neighbours on the near
+// sides (turning cubes reach past their own cell).
 float mapScene(vec3 p, out Hit hit) {
-    float u = zoom - floor(zoom);
-    float sc = 27.0 * pow(3.0, u);      // world units per local unit, outer level
-    vec3 q = F + (p - F) / sc;
+    vec3 id0 = floor(p / P + 0.5);
+    vec3 q0 = p - id0 * P;
+    vec3 sd = sign(q0 + 1e-6);
     float d = 1e9;
-    float base = levelBase();
-    for (int i = 0; i < NLEV; i++) {
-        vec3 cell; bool moving;
-        bool nested = i < NLEV - 1;
-        int axis = gAxis[i]; float layer = gLayer[i]; float ang = gAng[i];
-        float dl = levelSDF(q, axis, layer, ang, nested, cell, moving) * sc;
-        if (dl < d) {
-            d = dl;
-            hit.A = float(LMIN + i) + base; hit.cell = cell;
-            hit.local = (moving ? rotA(q, axis, -ang) : q) - cell;
-            hit.axis = axis; hit.layer = layer; hit.ang = moving ? ang : 0.0;
-            hit.seed = gSeed[i]; hit.pre = gPre[i];
+    for (int i = 0; i < 8; i++) {
+        float fi = float(i);   // no bitwise ops: Qt may run this as GLSL ES 1.00
+        vec3 o = vec3(mod(fi, 2.0), mod(floor(fi / 2.0), 2.0), floor(fi / 4.0)) * sd;
+        vec3 id = id0 + o;
+        if (!occupied(id)) continue;
+        vec3 q = p - id * P;
+        float bound = length(q) - 2.6;      // sphere around a turning cube
+        if (bound > d) continue;
+        float seed = cellSeed(id);
+        int pre, axis; float layer, ang;
+        cubeState(seed, pre, axis, layer, ang);
+        vec3 cell, lp;
+        float dc = cubeSDF(q, axis, layer, ang, cell, lp);
+        if (dc < d) {
+            d = dc;
+            hit.id = id; hit.cell = cell; hit.lp = lp; hit.seed = seed; hit.pre = pre;
         }
-        if (!nested) break;
-        float hb = sdBox(q - vec3(1.0), vec3(0.5)) * sc;
-        if (hb > d) break;
-        q = F + (q - F) * 3.0;
-        sc /= 3.0;
+    }
+    // empty neighbourhood: step towards the next cell boundary instead
+    if (d > 1e8) {
+        vec3 b = P * 0.5 - abs(q0);
+        d = max(min(b.x, min(b.y, b.z)), 0.0) + 0.05;
     }
     return d;
-}
-
-float map(vec3 p) { Hit h; return mapScene(p, h); }
-
-vec3 calcNormal(vec3 p, float e) {
-    vec2 k = vec2(1.0, -1.0);
-    return normalize(k.xyy * map(p + k.xyy * e) + k.yyx * map(p + k.yyx * e) +
-                     k.yxy * map(p + k.yxy * e) + k.xxx * map(p + k.xxx * e));
 }
 
 vec3 stickerColor(int face) {
@@ -279,102 +178,74 @@ vec3 stickerColor(int face) {
     return c5.rgb;
 }
 
-// Undo the completed scramble moves to find where a sticker started.
-int homeFace(Hit h, vec3 n) {
-    vec3 c = h.cell;
-    for (int j = 7; j >= 0; j--) {
-        if (j >= h.pre) continue;
-        int axis; float layer, dir;
-        moveOf(h.seed, j, axis, layer, dir);
-        if (abs(c[axis] - layer) < 0.5) {
-            c = floor(rotA(c, axis, -dir * 0.5 * PI) + 0.5);
-            n = floor(rotA(n, axis, -dir * 0.5 * PI) + 0.5);
-        }
-    }
+int faceIndex(vec3 n) {
     vec3 an = abs(n);
     if (an.x > 0.5) return n.x > 0.0 ? 0 : 1;
     if (an.y > 0.5) return n.y > 0.0 ? 2 : 3;
     return n.z > 0.0 ? 4 : 5;
 }
 
+// Undo the completed moves to find the sticker's home, then give each cube a
+// fixed scramble: some stickers keep their face colour, the rest are random.
+vec3 stickerAt(Hit h, vec3 n) {
+    vec3 c = h.cell;
+    float mseed = h.seed + floor(cycleTime(h.seed) / CYCLE) * 1.37;
+    for (int j = 2; j >= 0; j--) {
+        if (j >= h.pre) continue;
+        int axis; float layer, dir;
+        moveOf(mseed, j, axis, layer, dir);
+        if (layer > 1.5 || abs(c[axis] - layer) < 0.5) {
+            c = floor(rotA(c, axis, -dir * 0.5 * PI) + 0.5);
+            n = floor(rotA(n, axis, -dir * 0.5 * PI) + 0.5);
+        }
+    }
+    int home = faceIndex(n);
+    float solved = 0.15 + 0.5 * hash1(h.seed * 5.9);
+    float r = hash3(c * 3.1 + n * 7.7 + h.seed);
+    int face = r < solved ? home : int(floor(hash1(r * 91.0 + h.seed) * 6.0));
+    return stickerColor(face);
+}
+
 void main() {
-    prepareLevels();
-    vec2 uv = (qt_TexCoord0 - 0.5) * vec2(aspect, -1.0) * 2.0;
-
-    // camera: a slow wobble around the main diagonal, always outside the cube
-    float t = time;
-    vec3 diag = normalize(vec3(1.0));
-    vec3 dirc = normalize(diag + 0.13 * vec3(sin(t * 0.071), sin(t * 0.053 + 1.7), sin(t * 0.061 + 3.1)));
-    float D = 3.4;
-    vec3 ro = F + dirc * D;
-    vec3 fw = normalize(F - ro);
-    vec3 up0 = vec3(0.0, 1.0, 0.0);
-    vec3 rt = normalize(cross(fw, up0));
-    vec3 up = cross(rt, fw);
+    vec2 uv = (qt_TexCoord0 - 0.5) * vec2(aspect, -1.0) * 2.0 * VIEW;
     float cr = cos(spin), sr = sin(spin);
-    vec3 rt2 = cr * rt + sr * up;
-    vec3 up2 = -sr * rt + cr * up;
-    vec3 rd = normalize(fw * 1.75 + uv.x * rt2 + uv.y * up2);
+    uv = vec2(cr * uv.x - sr * uv.y, sr * uv.x + cr * uv.y);
 
-    float tr = 0.0;
-    float dist = 1e9;
+    // orthographic, straight down the diagonal: true isometric
+    vec3 fw = -normalize(vec3(1.0));
+    vec3 rt = normalize(cross(fw, vec3(0.0, 1.0, 0.0)));
+    vec3 up = cross(rt, fw);
+    // drift diagonally across the field
+    vec3 pan = (rt * 0.8 + up * 0.45) * zoom * P;
+    vec3 ro = pan + rt * uv.x + up * uv.y - fw * 9.0;   // above the stack
+    vec3 rd = fw;
+
+    float t = 0.0;
     bool hitAny = false;
-    float pix = 1.6 / 600.0;            // approx angular pixel size
-    for (int i = 0; i < 90; i++) {
-        vec3 p = ro + rd * tr;
-        dist = map(p);
-        if (dist < pix * tr) { hitAny = true; break; }
-        tr += dist * 0.85;
-        if (tr > 60.0) break;
+    Hit h;
+    for (int i = 0; i < 80; i++) {
+        float d = mapScene(ro + rd * t, h);
+        if (d < 0.004) { hitAny = true; break; }
+        t += d;
+        if (t > 60.0) break;
     }
 
-    vec3 col = bgField(rd, fw);
+    vec3 col = bgColor.rgb;
     if (hitAny) {
-        vec3 p = ro + rd * tr;
-        Hit h;
-        mapScene(p, h);
-        vec3 nrm = calcNormal(p, max(pix * tr * 0.5, 1e-5));
-
-        // face of the cubie in its own frame
-        vec3 lp = h.local;
+        mapScene(ro + rd * t, h);
+        vec3 lp = h.lp;
         vec3 al = abs(lp);
-        vec3 nl;
-        vec2 fuv;
+        vec3 nl; vec2 fuv;
         if (al.x >= al.y && al.x >= al.z) { nl = vec3(sign(lp.x), 0, 0); fuv = lp.yz; }
         else if (al.y >= al.z)            { nl = vec3(0, sign(lp.y), 0); fuv = lp.xz; }
         else                              { nl = vec3(0, 0, sign(lp.z)); fuv = lp.xy; }
 
         bool outer = dot(h.cell, nl) > 0.5;
-        // rounded-square sticker mask
-        vec2 sq = abs(fuv) - vec2(H - 0.115);
-        float sd = length(max(sq, 0.0)) + min(max(sq.x, sq.y), 0.0) - 0.06;
-        float aa = 0.012;
+        vec2 sq = abs(fuv) - vec2(H - 0.105);
+        float sd = length(max(sq, 0.0)) + min(max(sq.x, sq.y), 0.0) - 0.035;
+        float aa = 0.022;               // about one rendered pixel
         float sticker = outer ? 1.0 - smoothstep(-aa, aa, sd) : 0.0;
-
-        vec3 base = pow(bodyColor.rgb, vec3(2.2));
-        vec3 sc = pow(stickerColor(homeFace(h, nl)), vec3(2.2));
-        vec3 alb = mix(base, sc, sticker);
-
-        vec3 L1 = normalize(vec3(0.55, 0.9, 0.35));
-        vec3 L2 = normalize(vec3(-0.7, 0.2, 0.6));
-        float dif = max(dot(nrm, L1), 0.0);
-        float dif2 = max(dot(nrm, L2), 0.0);
-        vec3 hv = normalize(L1 - rd);
-        float spec = pow(max(dot(nrm, hv), 0.0), mix(24.0, 90.0, sticker)) * mix(0.25, 0.7, sticker);
-        float fres = pow(1.0 - max(dot(nrm, -rd), 0.0), 4.0);
-
-        // cheap AO from the scene distance a little off the surface
-        float scHit = 27.0 * pow(3.0, zoom - floor(zoom)) * pow(3.0, -(h.A - levelBase() - float(LMIN)));
-        float e = 0.09 * scHit;
-        float ao = clamp(map(p + nrm * e) / e, 0.0, 1.0);
-        ao = 0.45 + 0.55 * ao;
-
-        col = alb * (0.16 + 0.95 * dif + 0.28 * dif2) * ao + spec + fres * 0.12 * ao;
+        col = mix(bodyColor.rgb, stickerAt(h, nl), sticker);
     }
-
-    // vignette + gentle depth haze towards the centre tip
-    float v = 1.0 - 0.32 * dot(uv * vec2(0.6, 0.8), uv * vec2(0.6, 0.8));
-    col *= v;
-    col = pow(max(col, 0.0), vec3(0.4545));
     fragColor = vec4(col, 1.0) * qt_Opacity;
 }
