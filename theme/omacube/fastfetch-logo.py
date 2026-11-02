@@ -6,17 +6,22 @@ the colors.toml beside this file (omacube_* keys, else the theme's red/orange/
 foreground/yellow/green/blue). Reads only that file; writes nothing, starts no
 processes, opens no network connections. Author: Tiedeyez
 """
-import math, os, random, re, sys
+import math, os, random, re, stat, sys
 
 def palette():
     keys = {}
-    try:
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "colors.toml"), encoding="utf-8") as f:
-            for line in f.read(65536).splitlines()[:512]:
-                m = re.fullmatch(r'\s*([a-z_]+)\s*=\s*"#([0-9a-fA-F]{6})"\s*', line)
-                if m: keys[m[1]] = tuple(int(m[2][i:i+2], 16) for i in (0, 2, 4))
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "colors.toml")
+    try:  # one open, no symlinks, regular file only, at most 64 KiB read
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+        try:
+            data = os.read(fd, 65536) if stat.S_ISREG(os.fstat(fd).st_mode) else b""
+        finally:
+            os.close(fd)
     except OSError:
-        pass
+        data = b""
+    for line in data.decode("utf-8", "replace").splitlines()[:512]:
+        m = re.fullmatch(r'\s*([a-z_]+)\s*=\s*"#([0-9a-fA-F]{6})"\s*', line)
+        if m: keys[m[1]] = tuple(int(m[2][i:i+2], 16) for i in (0, 2, 4))
     def pick(name, fallback, default):
         return keys.get("omacube_" + name) or keys.get(fallback) or default
     return ({"W": pick("white", "foreground", (244,244,244)), "Y": pick("yellow", "yellow", (255,213,0)),

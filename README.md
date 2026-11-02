@@ -149,4 +149,4 @@ Measured as whole-GPU power with the background showing, on an RTX 4070 SUPER at
 
 ## Credits
 
-Built by Tiedeyez. MIT licence. "Omacube" is an independent fan project and is not affiliated with any puzzle-cube trademark holder.
+Built by Tiedeyez. MIT licence. The Omacube theme's wallpaper and unlock image are the stock Omarchy artwork recoloured; Omarchy is MIT-licensed, Copyright (c) David Heinemeier Hansson. "Omacube" is an independent fan project and is not affiliated with any puzzle-cube trademark holder.
