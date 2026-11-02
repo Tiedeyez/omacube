@@ -43,6 +43,7 @@ By default the cubes wear your current theme's colours. Each sticker takes the t
 - the original cube colours: red, orange, white, yellow, green and blue on black plastic
 - cube-face tiling for your windows
 - "layer click" animations: a fast flick, a small overshoot and a settle
+- a freshly scrambled cube as your fastfetch logo on every run (`fastfetch-logo.py`, opt-in; see below)
 
 The plugin doesn't install the theme for you. To add it to your theme switcher:
 
@@ -75,6 +76,21 @@ The turns obey the same law as a real cube. Every turn is an even permutation of
 ### How workspace switches work
 
 Switching workspace slides your windows sideways with the theme's flick-and-settle curve (420 ms). The background slides with them, one screen width in the direction you moved, on the same curve, so each workspace sits over its own stretch of the stack.
+
+### Fastfetch logo
+
+`theme/omacube/fastfetch-logo.py` prints a 42x24 isometric cube in truecolor half-blocks, scrambled anew each run, in the theme's sticker colours. Omarchy copies it along with the theme, but fastfetch won't use it until you point its logo at it. In `~/.config/fastfetch/config.jsonc`:
+
+```jsonc
+"logo": {
+  "type": "command-raw",
+  "source": "python3 -I ~/.local/state/omarchy/current/theme/fastfetch-logo.py",
+  "width": 42,
+  "height": 24
+}
+```
+
+That path only exists while the Omacube theme is active, so with another theme the logo comes up empty. To fall back to another logo, point `source` at a small script that runs this file only when it exists.
 
 ### For theme authors
 

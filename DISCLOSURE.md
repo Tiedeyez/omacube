@@ -57,6 +57,7 @@ These are in the repository but run only if you run them yourself:
 - `theme/omacube/` is an Omarchy theme, used only if you copy it into `~/.config/omarchy/themes/` and select it. It holds `colors.toml`, `icons.theme`, the stock Omarchy wallpaper and unlock art recoloured, `preview.png`, and two Lua files that Hyprland runs while the theme is active:
   - `hyprland.lua` sets border colours, rounding and animation curves. It makes the cube-face layout the tiling layout and binds six keys to cube turns (SUPER+ALT+R, SUPER+ALT+SHIFT+R, SUPER+CTRL+ALT+arrows).
   - `cubeface.lua` is the layout: it decides where each tiled window goes. It reads only the window list Hyprland hands it and the address of the focused window. It starts no processes, reads and writes no files, and opens no network connections.
+  - `fastfetch-logo.py` is a Python script that prints a scrambled cube as text art for fastfetch. It runs only if you set it as fastfetch's logo command. It reads the `colors.toml` beside it (first 64 KiB, 512 lines), uses Python's `random` for the scramble, writes only to stdout, starts no processes and opens no network connections.
   All of this is undone when you switch to another theme. One thing outlives the switch: the layout name `lua:omacube` stays registered with Hyprland until it restarts. It's unused, but it's there.
 
 ## What it costs
