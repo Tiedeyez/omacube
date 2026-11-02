@@ -10,6 +10,7 @@
 #   6  with nothing turning, no visible face is partly covered by a cube
 #      in front of it: no triangles, only whole faces
 #   6x the same check on the previous random fill: expected to FAIL
+#   7  the word at rest shows only yellow and red on its face (mosaic read right)
 #   8  the fast drawing (march every cube in its cell, then add slid-out cubes
 #      nearer by lift * sqrt 3) matches marching the slid-out stack directly
 #   5  both loops are seamless: the picture one cube loop later (time +
@@ -22,8 +23,10 @@ out=$PWD/frames/selfcheck
 rm -rf "$out"; mkdir -p "$out"
 times=${SELFCHECK_TIMES:-"2.37 11.9 20.0 40.2 3600.5 46080.7"}
 W=${SELFCHECK_W:-1600}; H=${SELFCHECK_H:-900}
+mono_pan=${SELFCHECK_MONO_PAN:-286.529}     # 2 sites along: a monument is in frame
+mono_times=${SELFCHECK_MONO_TIMES:-"3.0 13.0 50.0 101.6 112.0"}
 status=0
-for mode in 1 1x 2 3 4 6 6x 8; do
+for mode in 1 1x 2 3 4 6 6x 7 8; do
   case $mode in
     1x) defs=(-DOMACUBE_DEBUG=1 -DOMACUBE_NO_FAR_BOUND) ;;
     6)  defs=(-DOMACUBE_DEBUG=6 -DOMACUBE_STATIC) ;;
@@ -35,6 +38,11 @@ for mode in 1 1x 2 3 4 6 6x 8; do
   for t in $times; do
     dir=$out/mode-$mode-t$t
     dev/preview.sh "$dir" 1 24 "$t" "$W" "$H" "$qsb" >/dev/null
+  done
+  # framed on a monument (site 2): solve, word, scramble
+  for t in $mono_times; do
+    dir=$out/mode-$mode-tm$t
+    OMACUBE_PAN=$mono_pan dev/preview.sh "$dir" 1 24 "$t" "$W" "$H" "$qsb" >/dev/null
   done
   echo "== self-check $mode"
   if [ "$mode" = 1x ] || [ "$mode" = 6x ]; then

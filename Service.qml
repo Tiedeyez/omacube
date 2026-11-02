@@ -12,10 +12,13 @@ import "Palette.js" as Palette
 // fragment shader (shaders/omacube.frag) on a layer-shell surface per screen.
 // Every workspace switch slides the stack sideways one screen width, with the
 // windows. Free cubes slide out of the pile to turn, so no layer ever passes
-// through another. The cubes take their colours from the active Omarchy theme.
+// through another. Here and there a giant solved cube corner rises out of the
+// pile with OMARCHY in a sticker mosaic on its face. The cubes take their
+// colours from the active Omarchy theme.
 //
-// It reads two small files, the active theme's colors.toml and theme.name;
-// writes nothing, runs no processes and touches no network (DISCLOSURE.md).
+// It reads two small files, the active theme's colors.toml and theme.name,
+// plus its own mosaic.png; writes nothing, runs no processes and touches no
+// network (DISCLOSURE.md).
 // It sits on the "bottom" layer (above the stock wallpaper, below windows)
 // with an empty input region, so clicks fall through to the desktop.
 Item {
@@ -176,6 +179,14 @@ Item {
           // one screen width (2 * VIEW * aspect world units) per workspace
           property real pan: root.wrap(root.turnPos * 30 * aspect, root.panPeriod)
           property real aspect: width / Math.max(1, height)
+          // the word's 20 cube states, read texel by texel
+          property var mosaic: mosaicData
+          Image {
+            id: mosaicData
+            source: Qt.resolvedUrl("mosaic.png")
+            visible: false
+            smooth: false
+          }
           property real texel: 1 / canvas.texH
           property real pixelArt: canvas.pixelArt ? 1 : 0
           property color c0: root.palette.stickers[0]

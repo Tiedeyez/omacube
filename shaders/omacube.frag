@@ -13,9 +13,16 @@
 // moved, so they take turns: each cube belongs to one of three classes and
 // moves only inside its class's window.
 //
-// A sticker's colour is found by undoing every move back to the solved cube,
-// so colours travel with the turning layers. MATH.md explains each step and
-// how it is tested.
+// Here and there a giant solved cube corner, built from the same cubes,
+// rises out of the pile: white top, red right face, green left face. On the
+// red face, OMARCHY is a sticker mosaic, yellow on red, across 10 x 2 real
+// cube states. Every couple of minutes those cubes take turns popping out of
+// the wall, scramble, push back in, then pop out again and turn back into
+// the word.
+//
+// A sticker's colour is found by undoing every move back to the solved cube
+// (or, on the word, back to its mosaic state), so colours travel with the
+// turning layers. MATH.md explains each step and how it is tested.
 //
 // Qt may run this as GLSL ES 1.00, so it uses no bitwise operators and
 // never indexes a vector with a variable.
@@ -40,6 +47,9 @@ layout(std140, binding = 0) uniform buf {
     vec4 bodyColor; // plastic: the lines between stickers, the inner faces, the print
     vec4 bgColor;   // anything a ray misses
 };
+// The 20 mosaic states (tools/build-mosaic.py): row k holds cube k's 54
+// sticker colours as index * 32, at x = face * 9 + (u + 1) * 3 + (v + 1).
+layout(binding = 1) uniform sampler2D mosaic;
 
 const float HALF_PI = 1.5707963;
 const float P = 3.0;          // lattice pitch: neighbouring cubes touch
@@ -59,6 +69,21 @@ const float TMAX = 20.0;      // every ray hits within 13.4 units (see MATH.md)
 const float LIFT = 0.63;      // > 3 / sqrt(2) - 1.5 = 0.6213, the least that clears
 const float WIN = 9.975;      // seconds per class window; 420 of them make the loop
 const float LIFT_S = 0.33;    // seconds an ordinary slide out, or back in, takes
+
+// The monument (MATH.md, "The monument"): a giant solved cube corner at one
+// site per 32 cells along the row direction (70% of sites). Its apex sits
+// at y = 4 with coordinate sum 13; the word is on its +x face, one row of
+// cubes below the top edge, 10 cubes wide and 2 tall.
+const float MONO_Y = 4.0;
+const float SITE_STEP = 32.0;
+const float SITE_P = 0.7;
+const float POP = 3.05;       // a mosaic cube pops out along +x this far (least that clears: 3)
+const float POP_S = 0.6;      // seconds to pop out, or back in
+const float W_EPOCH = 119.7;  // the word re-forms once per epoch; 35 of them make the loop
+const float W_SLOT = 5.0;     // seconds per mosaic class (4 classes)
+const float W_SCRAMBLE = 99.7;// when the scramble slots begin
+const float W_MOVE = 0.4;     // seconds per mosaic move
+const float W_MOVES = 8.0;    // moves in a mosaic cube's scramble
 
 
 // ---- arithmetic helpers ------------------------------------------------------
@@ -113,6 +138,22 @@ vec3 cellKey(vec3 id) { return id - PERIOD * floor(id * (1.0 / PERIOD)); }
 // x - y by 2, 1 or -1: never a multiple of 3, so neighbours never share one.
 float classOf(vec3 id) { return imod(id.x - id.y, 3.0); }
 
+// Monument sites. Site m's apex is (5 + 32m + j, 4, 4 - 32m - j) for a
+// jitter j in 0..7, so it sits at u = x - z = 1 + 64m + 2j. A cell within
+// reach of an apex (inside its corner, coordinate sum >= -3) is at most 16
+// from it in u, so the site it could belong to is unique.
+bool siteUsed(float m) { return hash13(vec3(imod(m, 32.0), 5002.0, 7.0)) < SITE_P; }
+vec3 siteApex(float m) {
+    float j = floor(hash13(vec3(imod(m, 32.0), 5001.0, 7.0)) * 8.0);
+    return vec3(5.0 + SITE_STEP * m + j, MONO_Y, 4.0 - SITE_STEP * m - j);
+}
+float siteNear(float u) { return floor((u + 15.0) / (2.0 * SITE_STEP)); }
+bool inMonument(vec3 v, out vec3 T) {
+    float m = siteNear(v.x - v.z);
+    T = siteApex(m);
+    return siteUsed(m) && v.x <= T.x && v.y <= T.y && v.z <= T.z;
+}
+
 // The stack is a down-set: whenever a cell holds a cube, so do the cells
 // behind it along -x, -y and -z. Seen down the diagonal, the surface of a
 // down-set is made of whole faces only. A face is exposed when the cell in
@@ -126,10 +167,14 @@ float classOf(vec3 id) { return imod(id.x - id.y, 3.0); }
 // cube only if every cell of its down-cone inside those layers is on: the
 // cells id - (a, b, c) with a, b, c >= 0. That cone rule is what makes it a
 // down-set, and missing cells leave the stair-stepped hexagonal stars.
+// A monument's corner, every cell at or behind its apex on all three axes,
+// is a down-set too, and a union of down-sets is a down-set.
 bool occupied(vec3 id) {
     float s = id.x + id.y + id.z;
-    if (s > 0.5) return false;
     if (s < -3.5) return true;
+    vec3 T;
+    if (inMonument(id, T)) return true;
+    if (s > 0.5) return false;
 #if defined(OMACUBE_OLD_FILL)
     return hash13(cellKey(id)) < 0.74;  // the previous rule, to demonstrate its bug
 #endif
@@ -193,6 +238,20 @@ void cycleMoves(float id, float seq, out vec3 ax, out vec3 ly, out vec3 dr) {
     ax.z = a; ly.z = layer; dr.z = dir;
 }
 
+// Move j of sequence seq (a base scramble or a mosaic scramble); homeOf()
+// walks the same sequence.
+void seqMove(float id, float seq, float j, out float axis, out float layer, out float dir) {
+    float stp;
+    float a = firstAxis(id, seq);
+    for (int i = 1; i < 20; i++) {
+        if (float(i) > j + 0.5) break;
+        decode(moveCode(id, seq, float(i)), stp, layer, dir);
+        a = imod(a + stp, 3.0);
+    }
+    decode(moveCode(id, seq, j), stp, layer, dir);
+    axis = a;
+}
+
 float easeTurn(float x) {
     // a fast flick that overshoots ~10% and settles exactly at 1
     x = clamp(x, 0.0, 1.0);
@@ -209,7 +268,10 @@ struct Cube {
     float layer;
     float ang;
     float lift;    // how far it has slid out along each axis, 0..LIFT
-    float src;     // where the move in progress comes from: 0 none, 1 burst
+    float tex;     // which mosaic state it is (0..19), or -1
+    float pop;     // how far a mosaic cube has popped out along +x
+    float rseq;    // sequence key of a mosaic cube's scramble
+    float src;     // where the move in progress comes from: 0 none, 1 burst, 2 scramble
     float idx;     // which move of that source
     float sgn;     // +1 making it, -1 undoing it
 };
@@ -257,16 +319,82 @@ void ordinaryState(vec3 cid, vec3 key, inout Cube c) {
     c.lift = LIFT * (1.0 - smoothstep(0.0, 1.0, (u - (6.0 + TURN) * sl) / LIFT_S));
 }
 
+// A mosaic cube's pop alone: how far out it is now. Each epoch it first
+// undoes this epoch's scramble in its class's solve slot, then, after the
+// word has stood for 80 s, does the next epoch's scramble in its class's
+// scramble slot. Wall neighbours differ in y or z parity, so they never
+// share a class and are never out together.
+float wallTime(vec3 cid, out bool undo, out float e) {
+    e = floor(time / W_EPOCH);
+    float u0 = time - e * W_EPOCH;
+    float q = imod(cid.y, 2.0) * 2.0 + imod(cid.z, 2.0);
+    undo = u0 < W_SCRAMBLE;
+    return u0 - (undo ? 0.0 : W_SCRAMBLE) - q * W_SLOT;
+}
+float wallPop(vec3 cid) {
+#if defined(OMACUBE_STATIC)
+    return 0.0;
+#endif
+    bool undo;
+    float e;
+    float u = wallTime(cid, undo, e);
+    if (u < POP_S) return POP * smoothstep(0.0, 1.0, u / POP_S);
+    u -= POP_S + W_MOVES * W_MOVE;
+    return u < 0.0 ? POP : POP * (1.0 - smoothstep(0.0, 1.0, u / POP_S));
+}
+
+void wallState(vec3 cid, inout Cube c) {
+    bool undo;
+    float e;
+    float u = wallTime(cid, undo, e);
+    c.rseq = 7000.0 + imod(undo ? e : e + 1.0, 35.0);  // 35 epochs a loop
+    if (u < POP_S) {
+        c.nb = undo ? W_MOVES : 0.0;
+        c.pop = POP * smoothstep(0.0, 1.0, u / POP_S);  // 0 while u < 0
+        return;
+    }
+    u -= POP_S;
+    if (u < W_MOVES * W_MOVE) {
+        float j = floor(u / W_MOVE);
+        float f = u - j * W_MOVE;
+        c.pop = POP;
+        c.src = 2.0;
+        if (undo) { c.nb = W_MOVES - j; c.idx = W_MOVES - 1.0 - j; c.sgn = -1.0; }
+        else      { c.nb = j;           c.idx = j;                 c.sgn = 1.0; }
+#if !defined(OMACUBE_STATIC)
+        float dir;
+        seqMove(c.id, c.rseq, c.idx, c.axis, c.layer, dir);
+        c.ang = c.sgn * dir * easeTurn(f / (W_MOVE * TURN)) * HALF_PI;
+#endif
+        return;
+    }
+    c.nb = undo ? 0.0 : W_MOVES;
+    c.pop = POP * (1.0 - smoothstep(0.0, 1.0, (u - W_MOVES * W_MOVE) / POP_S));
+}
+
 Cube cubeState(vec3 cid) {
     Cube c;
     vec3 key = cellKey(cid);
     c.id = cubeIdOf(key);
-    c.cycKey = 0.0; c.pre = 0.0; c.lift = 0.0;
-    c.nb = baseLen(key);
+    c.cycKey = 0.0; c.pre = 0.0; c.lift = 0.0; c.tex = -1.0; c.pop = 0.0; c.rseq = 0.0;
     noMove(c);
-    ordinaryState(cid, key, c);            // tests freeAt() only mid-burst
+    vec3 T;
+    if (inMonument(cid, T)) {
+        // part of the giant cube: solved and still, except the word
+        c.nb = 0.0;
+        float r = T.y - cid.y;
+        float col = T.z - cid.z;
+        if (cid.x == T.x && r > 0.5 && r < 2.5 && col > -0.5 && col < 9.5) {
+            c.tex = (r - 1.0) * 10.0 + col;
+            wallState(cid, c);
+        }
+    } else {
+        c.nb = baseLen(key);
+        ordinaryState(cid, key, c);        // tests freeAt() only mid-burst
+    }
 #if defined(OMACUBE_STATIC)
-    c.lift = 0.0;                        // self-check 6: nothing turns or slides
+    c.lift = 0.0;                        // self-check 6: nothing turns, slides or pops
+    c.pop = 0.0;
 #endif
     return c;
 }
@@ -311,6 +439,9 @@ struct Hit {
     float cycKey;
     float pre;
     float nb;
+    float tex;
+    float rseq;
+    float pop;
     float axis;    // rotation of the cubie's frame (ang = 0: not moving)
     float ang;
     float lift;    // how far the cube has slid out: it is nearer by lift * sqrt(3)
@@ -327,6 +458,7 @@ struct Hit {
 void fillHit(inout Hit hit, Cube cb, vec3 id, vec3 cell, vec3 lp, bool moving) {
     hit.cell = cell; hit.lp = lp; hit.key = cellKey(id); hit.cid = id;
     hit.id = cb.id; hit.cycKey = cb.cycKey; hit.pre = cb.pre; hit.nb = cb.nb;
+    hit.tex = cb.tex; hit.rseq = cb.rseq; hit.pop = cb.pop;
     hit.axis = cb.axis; hit.ang = moving ? cb.ang : 0.0;
     hit.lift = cb.lift;
 #if defined(OMACUBE_DEBUG)
@@ -383,6 +515,7 @@ float mapScene(vec3 p, out Hit hit) {
         }
         if (gKnown[i] < 1.5) continue;
         Cube cb = gCube[i];
+        if (cb.pop > 0.0) continue;                     // popped out of the wall: main() draws it
         vec3 cell, lp;
         bool moving;
         float dc = cubeSDF(q, cb.axis, cb.layer, cb.ang, cell, lp, moving);
@@ -400,9 +533,10 @@ float mapScene(vec3 p, out Hit hit) {
     return d;
 }
 
-// One cube on its own, in its cell: where along the ray it is first hit.
-bool traceCube(vec3 id, Cube cb, vec3 ro, vec3 fw, inout Hit hit, out float t) {
-    vec3 c = id * P;
+// One cube on its own, centred off its cell by off: where along the ray it
+// is first hit.
+bool traceCube(vec3 id, Cube cb, vec3 off, vec3 ro, vec3 fw, inout Hit hit, out float t) {
+    vec3 c = id * P + off;
     float tc = dot(c - ro, fw);
     t = tc - R;
     for (int i = 0; i < 64; i++) {
@@ -445,6 +579,7 @@ float mapSceneSlid(vec3 p, out Hit hit) {
         }
         if (gKnown[i] < 1.5) continue;
         Cube cb = gCube[i];
+        if (cb.pop > 0.0) continue;
         vec3 cell, lp;
         bool moving;
         float dc = cubeSDF(p - id * P - vec3(cb.lift), cb.axis, cb.layer, cb.ang, cell, lp, moving);
@@ -453,11 +588,47 @@ float mapSceneSlid(vec3 p, out Hit hit) {
             fillHit(hit, cb, id, cell, lp, moving);
         }
     }
+    // popped mosaic cubes, measured directly
+    float m = siteNear((p.x - p.z) / P);
+    if (siteUsed(m)) {
+        vec3 T = siteApex(m);
+        for (int k = 0; k < 20; k++) {
+            float fk = float(k);
+            float r = 1.0 + floor(fk / 10.0);
+            vec3 cid = vec3(T.x, T.y - r, T.z - (fk - 10.0 * (r - 1.0)));
+            if (wallPop(cid) <= 0.0) continue;
+            Cube cb = cubeState(cid);
+            vec3 cell, lp;
+            bool moving;
+            float dc = cubeSDF(p - cid * P - vec3(cb.pop, 0.0, 0.0), cb.axis, cb.layer, cb.ang, cell, lp, moving);
+            if (dc < d) {
+                d = dc;
+                fillHit(hit, cb, cid, cell, lp, moving);
+            }
+        }
+    }
     return d;
 }
 #endif
 
 // ---- colour ------------------------------------------------------------------------
+
+vec3 paletteColor(float i) {
+    if (i < 0.5) return c0.rgb;
+    if (i < 1.5) return c1.rgb;
+    if (i < 2.5) return c2.rgb;
+    if (i < 3.5) return c3.rgb;
+    if (i < 4.5) return c4.rgb;
+    return c5.rgb;
+}
+
+// The colour index mosaic state k has at sticker slot (c, n).
+float mosaicIndex(float k, vec3 c, vec3 n) {
+    float f = n.x > 0.5 ? 0.0 : (n.x < -0.5 ? 1.0 : (n.y > 0.5 ? 2.0 : (n.y < -0.5 ? 3.0 : (n.z > 0.5 ? 4.0 : 5.0))));
+    vec2 w = abs(n.x) > 0.5 ? c.yz : (abs(n.y) > 0.5 ? c.xz : c.xy);
+    float x = f * 9.0 + (w.x + 1.0) * 3.0 + (w.y + 1.0);
+    return floor(texture(mosaic, vec2((x + 0.5) / 64.0, (k + 0.5) / 32.0)).r * (255.0 / 32.0) + 0.5);
+}
 
 vec3 stickerColor(vec3 n) {
     if (n.x > 0.5) return c0.rgb;
@@ -477,8 +648,10 @@ void undoMove(inout vec3 c, inout vec3 n, float axis, float layer, float dir) {
 }
 
 // Where a sticker started on the solved cube: undo this burst's applied
-// moves, newest first, then the base scramble, newest first. The base
-// moves are decoded once, forwards, then undone backwards.
+// moves, newest first, then the base scramble, newest first. On the word,
+// undo the applied part of the mosaic scramble instead, which leads back to
+// the cube's mosaic state. The moves are decoded once, forwards, then
+// undone backwards.
 void homeOf(Hit h, inout vec3 c, inout vec3 n) {
     if (h.pre > 0.5) {
         vec3 ax, ly, dr;
@@ -487,14 +660,15 @@ void homeOf(Hit h, inout vec3 c, inout vec3 n) {
         if (h.pre > 1.5) undoMove(c, n, ax.y, ly.y, dr.y);
         undoMove(c, n, ax.x, ly.x, dr.x);
     }
+    float seq = h.tex > -0.5 ? h.rseq : BASE;
     float axs[20];
     float lys[20];
     float drs[20];
     float stp, layer, dir;
-    float a = firstAxis(h.id, BASE);
+    float a = firstAxis(h.id, seq);
     for (int j = 0; j < 20; j++) {
         if (float(j) >= h.nb) break;
-        decode(moveCode(h.id, BASE, float(j)), stp, layer, dir);
+        decode(moveCode(h.id, seq, float(j)), stp, layer, dir);
         if (j > 0) a = imod(a + stp, 3.0);              // consecutive moves change axis
         axs[j] = a; lys[j] = layer; drs[j] = dir;
     }
@@ -518,6 +692,7 @@ float mapRef(vec3 p) {
         vec3 id = id0 + o;
         if (!occupied(id)) continue;
         Cube cb = cubeState(id);
+        if (cb.pop > 0.0) continue;
         vec3 cell, lp;
         bool moving;
         d = min(d, cubeSDF(p - id * P, cb.axis, cb.layer, cb.ang, cell, lp, moving));
@@ -540,17 +715,28 @@ void main() {
 
     // Workspace switches slide the camera sideways along rt. rt lies in the
     // plane of the stack's top, so the camera stays the same height above it.
-    // Rays start at coordinate sum 4.6: with every cube in its cell, no part
-    // of any cube reaches above 4.5.
+    // t = 0 is at coordinate sum 4.6: with every cube in its cell, no part of
+    // the pile reaches above 4.5. Near a monument the ray starts where it
+    // enters the monument's corner, an octant it cannot reach before.
     float px = 2.0 * VIEW * texel;                      // world units per pixel
     float slide = pixelArt > 0.5 ? floor(pan / px + 0.5) * px : pan;  // whole pixels in pixel art
     vec3 ro = rt * (slide + uv.x) + up * uv.y - fw * 2.6558;
+    vec2 sp = vec2(slide + uv.x, uv.y);                 // the ray's spot on screen
+    float fi = sp.x * 0.47140452;                       // sqrt(2) / 3: the spot's u = x - z
+    float mS = siteNear(fi);
+    bool mono = siteUsed(mS);
+    vec3 TS = siteApex(mS);
+    float tStart = 0.0;
+    if (mono) {
+        vec3 te3 = (ro - TS * P - 1.5) * 1.7320508;
+        tStart = min(0.0, max(te3.x, max(te3.y, te3.z)) - 0.05);
+    }
 
     // Sphere tracing: mapScene never overestimates, so stepping by d can
     // never pass through a cube. Most rays hit in about 9 steps. A ray that
     // runs alongside a face tumbled edge-on to the view crawls in small
     // steps; the worst seen in testing took about 216, hence the budget.
-    float t = 0.0;
+    float t = tStart;
     float d = 1.0;
     bool hitAny = false;
     Hit h;
@@ -580,8 +766,6 @@ void main() {
     // reaches no farther than R from its centre's column on screen. Columns
     // are the lines (i, j, 0) + n (1, 1, 1); each projects to one point.
     float tBest = hitAny ? t - h.lift * 1.7320508 : 1e9;
-    vec2 sp = vec2(slide + uv.x, uv.y);                 // the ray's spot on screen
-    float fi = sp.x * 0.47140452;                       // sqrt(2) / 3
     float fj = (sp.y * 0.81649658 + fi) * 0.5;          // sqrt(6) / 3
     float win = floor(time / WIN);
     for (int di = -1; di <= 1; di++) {
@@ -601,12 +785,34 @@ void main() {
                 if (cb.lift <= 0.0 || !occupied(b)) continue;
                 Hit hy;
                 float ty;
-                if (traceCube(b, cb, ro, fw, hy, ty) && ty - cb.lift * 1.7320508 < tBest) {
+                if (traceCube(b, cb, vec3(0.0), ro, fw, hy, ty) && ty - cb.lift * 1.7320508 < tBest) {
                     tBest = ty - cb.lift * 1.7320508;
                     h = hy;
                     hitAny = true;
                     grazed = false;
                 }
+            }
+        }
+    }
+    // Mosaic cubes popped out of the wall: the march left their cells empty
+    // (so the hole shows the giant cube behind); draw each at its spot.
+    if (mono && abs(fi - (TS.x - TS.z) - 5.5) < 9.0) {
+        for (int k = 0; k < 20; k++) {
+            float fk = float(k);
+            float r = 1.0 + floor(fk / 10.0);
+            vec3 cid = vec3(TS.x, TS.y - r, TS.z - (fk - 10.0 * (r - 1.0)));
+            float pop = wallPop(cid);
+            if (pop <= 0.0) continue;
+            vec3 cw = cid * P + vec3(pop, 0.0, 0.0);
+            if (length(vec2(dot(cw, rt), dot(cw, up)) - sp) > R) continue;
+            Cube cb = cubeState(cid);
+            Hit hy;
+            float ty;
+            if (traceCube(cid, cb, vec3(cb.pop, 0.0, 0.0), ro, fw, hy, ty) && ty < tBest) {
+                tBest = ty;
+                h = hy;
+                hitAny = true;
+                grazed = false;
             }
         }
     }
@@ -654,7 +860,7 @@ void main() {
             if (cover > 0.0) {
                 vec3 c = h.cell, n = nl;
                 homeOf(h, c, n);
-                vec3 stk = stickerColor(n);
+                vec3 stk = h.tex > -0.5 ? paletteColor(mosaicIndex(h.tex, c, n)) : stickerColor(n);
                 // blend in linear light, then back to sRGB
                 vec3 body = pow(bodyColor.rgb, vec3(2.2));
                 col = pow(mix(body, pow(stk, vec3(2.2)), cover), vec3(1.0 / 2.2));
@@ -674,12 +880,15 @@ void main() {
     col = dim;
     if (hitAny && h.src > 0.5) {
         float ax, ly, dr;
-        {
+        if (h.src < 1.5) {
             vec3 ax3, ly3, dr3;
             cycleMoves(h.id, h.cycKey, ax3, ly3, dr3);
             ax = comp(ax3, h.idx); ly = comp(ly3, h.idx); dr = comp(dr3, h.idx);
             // making move idx: idx moves applied; undoing it: idx + 1
             if (h.pre != h.idx + (h.sgn > 0.0 ? 0.0 : 1.0)) col = bad;
+        } else {
+            seqMove(h.id, h.rseq, h.idx, ax, ly, dr);
+            if (h.nb != h.idx + (h.sgn > 0.0 ? 0.0 : 1.0)) col = bad;
         }
         bool same = ax == h.mvAxis && ly == h.mvLayer
                  && (abs(h.mvAng) < 1e-4 || sign(h.sgn * dr) == sign(h.mvAng));
@@ -723,6 +932,19 @@ void main() {
         vec3 e2 = abs(nl.z) > 0.5 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0);
         if (occupied(front + e1) || occupied(front + e2)) col = bad;
     }
+#elif OMACUBE_DEBUG == 7
+    // the word at rest: a mosaic cube with nothing applied shows only yellow
+    // or red on its +x face, and green on +z (first column), so the mosaic
+    // states are read the right way round; green tint marks checked pixels
+    col = dim;
+    if (hitAny && h.tex > -0.5 && h.nb < 0.5 && h.pop <= 0.0 && dot(h.cell, nl) > 0.5) {
+        float ci = mosaicIndex(h.tex, h.cell, nl);
+        // (a popped neighbour can bare a +z side further along; only the
+        // first column's +z belongs to the green face)
+        bool first = imod(h.tex, 10.0) < 0.5;
+        bool ok = nl.x > 0.5 ? (ci == 0.0 || ci == 3.0) : (nl.z > 0.5 && first ? ci == 4.0 : true);
+        col = ok ? vec3(0.0, 0.6, 0.0) : bad;
+    }
 #elif OMACUBE_DEBUG == 8
     // the fast two-step drawing finds the same cube, at the same spot, as
     // marching the stack directly with every cube where it really is
@@ -730,7 +952,7 @@ void main() {
     {
         gId0 = vec3(1e9);
         gSd = vec3(0.0);
-        vec3 ro2 = ro - fw * 1.15;                      // start above slid-out cubes too
+        vec3 ro2 = ro + fw * (tStart - 6.0);            // above slid-out and popped cubes too (POP * sqrt 3 = 5.3)
         float t2 = 0.0;
         float d2 = 1.0;
         bool hit2 = false;

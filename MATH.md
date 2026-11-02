@@ -213,3 +213,40 @@ So the shader doesn't march slid-out cubes at all. It marches the stack with eve
 Each one is traced on its own. The nearest surface, march or candidate, after taking off `lift·√3`, is what the pixel shows.
 
 Marching the slid-out stack directly would need a much smaller bound (`3 + min|q| − LIFT/2 − R`, as small as 0.087 against 0.402), and on the GPU it cost about 108 W against 48 W at native resolution. Self-check 8 keeps that direct march as a reference and compares the two on every sticker pixel: they agree, except for at most a pixel per frame on silhouettes where the two sample a depth edge differently. Self-check 3 shows the march back at about 13.5 steps per ray (the original averaged 13.9).
+
+## 16. The monument
+
+Here and there the corner of a giant solved cube rises out of the pile. Sites sit along the row direction (1, 0, −1), one per 32 cells (70% of them used), with the corner's apex `T` at y = 4 and coordinate sum 13, at a jittered spot along the row. Every cell at or behind `T` on all three axes is part of the giant cube: present, solved and still. That corner is a down-set, and a union of down-sets is a down-set, so faces stay whole (`check-math.py` checks the pile plus a corner). A solved cube shows white on top, red on the right and green on the left, so the giant cube's three faces are solid white, red and green.
+
+The march starts each ray where it enters the corner's octant if that comes first, so rays above a monument don't crawl down through empty space.
+
+## 17. The word: a sticker mosaic
+
+OMARCHY is written on the red face in yellow, one sticker per pixel, in a 6 × 30 pixel font after the Omarchy wordmark: 10 cubes wide, 2 tall, one row of cubes below the top edge. The font is 6 rows, so letters fill exactly two rows of cubes.
+
+The three faces meeting at a corner piece are always three different colours, so a real mosaic shows one face per cube. The text block starts one row below the giant top edge for the same reason: those cubes would otherwise have to keep an all-white top, and a centre sticker can only turn yellow if the whole cube turns.
+
+`tools/build-mosaic.py` builds each of the 20 states.
+
+1. It places real corner and edge pieces, each turned into its slot by a proper rotation, so a piece never shows a mirror-image colour order.
+2. It tries the 24 whole-cube orientations, identity first.
+3. It fixes the three invariants (corner twist, edge flip, permutation parity) with pieces nobody sees.
+4. For the first column it keeps the +z face all green, flush with the giant left face.
+
+`check-math.py` confirms the legality test itself: it accepts every state that up to 30 random turns reach, and rejects a single twisted corner, a single flipped edge and a single swapped pair. Then it checks all 20 states in `mosaic.png` and reads the word back from their stickers. The shader looks the colours up in `mosaic.png`: each sticker's position is undone back to the mosaic state, then the colour is read at that slot. Self-check 7 confirms on the GPU that the word at rest shows only yellow and red.
+
+## 18. The word's motion
+
+The word re-forms once per epoch of 119.7 s (35 per loop).
+
+- **Classes.** A wall cube's class is (y mod 2, z mod 2). Neighbours on the wall differ in y or z parity, so they never share one, and two cubes of the same class are at least 6 apart, more than the 2R = 5.2 two turning cubes can reach.
+- **Scramble.** From 99.7 s, each class in turn (5 s slots) pops straight out of the wall along +x by 3.05 (0.6 s), makes 8 random moves (0.4 s each), and pushes back in (0.6 s).
+- **Solve.** At the start of the next epoch, each class in turn pops out again and undoes those 8 moves, so the word re-forms letter by letter.
+- **Hold.** The word then stands for 80 s.
+
+Each epoch's solve undoes the scramble the previous epoch made, so nothing jumps between epochs.
+
+A popped cube must clear the wall around it. Popping 3 brings its back face level with the wall, and from there, `check-math.py`'s exact box test finds no collision for any move or angle; POP is 3.05. Sliding out and back only ever touches its neighbours' faces. Popped out, it clears every pile and monument cube near it, because every text cube has coordinate sum at least 2, so the space in front is empty.
+
+Drawing a popped cube: the march leaves its cell empty, so the hole shows the giant cube behind it, and `main()` traces the cube at its popped spot. Self-check 8, framed on a monument, compares this with a direct march during the solve, the hold and the scramble: they agree except for a few silhouette pixels.
+

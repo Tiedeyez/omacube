@@ -20,6 +20,11 @@ brute force rather than the shader's shortcuts:
              their class's window and only fully slid out
   physics    cubes turning in place collided; free cubes slid out by LIFT
              clear every neighbour, and neighbours in a layer take turns
+  mosaic     the legality test is right; mosaic.png's 20 states are legal
+             and their faces spell OMARCHY
+  monument   the giant corner keeps the stack a down-set; the space where
+             mosaic cubes pop out is empty; popped cubes clear everything
+  mosaic events  solve, hold and scramble with no jump, turning fully popped
   loop       the clock wrap and the workspace-slide wrap are seamless
   camera     the view is a true, unmirrored isometric projection, and the
              stickers use the standard colour scheme
@@ -809,6 +814,296 @@ def pose_gap(a, b):
                for h in a)
 
 
+def read_png_gray(path):
+    """Minimal PNG reader for an 8-bit greyscale, non-interlaced image."""
+    import struct, zlib
+    data = open(path, "rb").read()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    pos, idat, w = 8, b"", 0
+    while pos < len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + n]
+        if kind == b"IHDR":
+            w, h, depth, ctype, _, _, inter = struct.unpack(">IIBBBBB", body)
+            assert depth == 8 and ctype == 0 and inter == 0, "must be 8-bit grey"
+        elif kind == b"IDAT":
+            idat += body
+        pos += 12 + n
+    raw, rows, prev = zlib.decompress(idat), [], bytearray(w)
+    for y in range(h):
+        f, line = raw[y * (w + 1)], bytearray(raw[y * (w + 1) + 1:(y + 1) * (w + 1)])
+        for x in range(w):
+            a = line[x - 1] if x else 0
+            b, c = prev[x], (prev[x - 1] if x else 0)
+            if f == 1: line[x] = (line[x] + a) & 255
+            elif f == 2: line[x] = (line[x] + b) & 255
+            elif f == 3: line[x] = (line[x] + (a + b) // 2) & 255
+            elif f == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                line[x] = (line[x] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        rows.append(line)
+        prev = line
+    return w, h, rows
+
+
+# ---- the monument: a giant solved cube corner with the word in a sticker mosaic --
+#
+# Sites sit along the row direction (1, 0, -1), one per 32 cells (70% of
+# them used), each with its corner (apex) T at height y = 4, coordinate sum
+# 13. Every cell v <= T (componentwise) is part of the giant cube: always
+# present, solved, still. Its +x face carries the word in a 10 x 2 block of
+# cubes, one row below the top edge: cells (T.x, 4 - r, T.z - c), r = 1, 2,
+# c = 0..9. Those cubes are mosaic states (tools/build-mosaic.py). Now and
+# then they pop straight out along +x, turn, and push back in.
+
+MONO_A = 13             # the apex's coordinate sum
+MONO_Y = 4              # the apex's y
+SITE_STEP = 32          # cells between sites along (1, 0, -1)
+POP = 3.05              # how far a mosaic cube pops out along +x (least that clears: 3)
+W_SLOT = 5.0            # seconds per mosaic class slot (4 classes)
+W_EPOCH = 4189.5 / 35   # 119.7 s: the word re-forms once per epoch
+POP_S = 0.6             # seconds to pop out, or back in
+W_MOVE = 0.4            # seconds per mosaic move
+W_MOVES = 8             # moves in a mosaic cube's scramble
+W_SCRAMBLE = W_EPOCH - 4 * W_SLOT   # 99.7 s: when the scramble slots begin
+
+
+def load_mosaic_module():
+    import importlib.util, os
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "build-mosaic.py")
+    spec = importlib.util.spec_from_file_location("build_mosaic", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def text_cells(T):
+    return [(T[0], MONO_Y - r, T[2] - c) for r in (1, 2) for c in range(10)]
+
+
+def mosaic_class(cell):
+    """Neighbours on the wall differ in y or z parity, so they never share a class."""
+    return (cell[1] % 2) * 2 + cell[2] % 2
+
+
+def test_mosaic(rng):
+    bm = load_mosaic_module()
+    # the invariants: preserved by real turns, broken by single twists, flips, swaps
+    def turn(st, axis, layer, d):
+        out = [None] * 54
+        for c in itertools_product3():
+            for a in range(3):
+                for sgn in (1, -1):
+                    n = tuple(sgn if k == a else 0 for k in range(3))
+                    if c[a] != sgn:
+                        continue
+                    if layer == 2 or c[axis] == layer:
+                        c2, n2 = rot90(c, axis, d), rot90(n, axis, d)
+                    else:
+                        c2, n2 = c, n
+                    out[bm.slot_index(c2, n2)] = st[bm.slot_index(c, n)]
+        return out
+    ok = True
+    for _ in range(300):
+        st = bm.solved_state()
+        for _ in range(rng.randrange(1, 30)):
+            st = turn(st, rng.randrange(3), rng.choice((-1, 1)), rng.choice((-1, 1)))
+        ok &= bm.legal(st)
+    check("mosaic: the legality test accepts every state real turns reach", ok)
+    broken = 0
+    for kind in ("twist", "flip", "swap"):
+        st = bm.solved_state()
+        if kind == "twist":
+            s = (1, 1, 1)
+            pl = [p for p in bm.placements(s, s) if p != {k: st[k] for k in p}][0]
+            for k, col in pl.items():
+                st[k] = col
+        elif kind == "flip":
+            s = (1, 1, 0)
+            pl = [p for p in bm.placements(s, s) if p != {k: st[k] for k in p}][0]
+            for k, col in pl.items():
+                st[k] = col
+        else:
+            a, b = (1, 1, 0), (-1, 1, 0)
+            for k, col in bm.placements(b, a)[0].items():
+                st[k] = col
+            for k, col in bm.placements(a, b)[0].items():
+                st[k] = col
+        broken += not bm.legal(st)
+    check("mosaic: it rejects a single twisted corner, flipped edge, or swapped pair", broken == 3)
+    # mosaic.png: every state legal (after undoing its whole-cube turn) and the word reads
+    import os
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mosaic.png")
+    w, h, rows = read_png_gray(path)
+    states = [[rows[k][x] // 32 for x in range(54)] for k in range(20)]
+    exact = all(rows[k][x] % 32 == 0 and rows[k][x] // 32 < 6 for k in range(20) for x in range(54))
+    legal_all = True
+    for st in states:
+        found = False
+        for M in bm.ROTATIONS:
+            back = [None] * 54
+            for c in itertools_product3():
+                for a in range(3):
+                    for sgn in (1, -1):
+                        n = tuple(sgn if k == a else 0 for k in range(3))
+                        if c[a] == sgn:
+                            back[bm.slot_index(c, n)] = st[bm.slot_index(bm.matmul(M, c), bm.matmul(M, n))]
+            if all(back[f * 9 + 4] == f for f in range(6)) and bm.legal(back):
+                found = True
+                break
+        legal_all &= found
+    check("mosaic: mosaic.png holds 20 legal cube states (exact colour codes)",
+          (w, h) == (64, 32) and exact and legal_all)
+    picture = bm.wall_picture(states)
+    check("mosaic: their +x faces spell OMARCHY in the 6 x 30 sticker font", picture == bm.bitmap(),
+          "\n      " + "\n      ".join(picture))
+    green = all(states[c][bm.slot_index((xl, yl, 1), (0, 0, 1))] == 4
+                for c in (0, 10) for xl in (-1, 0, 1) for yl in (-1, 0, 1))
+    check("mosaic: the first column's +z faces stay green, flush with the giant left face", green)
+
+
+def itertools_product3():
+    return [(i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)]
+
+
+def occupied_mono(c, on, apexes):
+    """occupied() with monuments: every cell <= an apex is present."""
+    s = sum(c)
+    if s <= -4:
+        return True
+    if any(all(c[k] <= T[k] for k in range(3)) for T in apexes):
+        return True
+    return s <= 0 and occupied_new(c, on)
+
+
+def test_monument(rng):
+    T = (5, MONO_Y, 4)
+    check("monument: the apex has coordinate sum 13 and every text cube sum 2..12",
+          sum(T) == MONO_A and min(sum(c) for c in text_cells(T)) == 2)
+    on = make_switch(11, SWITCH)
+    occ = memoize(lambda c: occupied_mono(c, on, [T]))
+    cells = [(i, j, k) for i in range(-12, 9) for j in range(-12, 7) for k in range(-12, 9) if -5 <= i + j + k <= 14]
+    down = all(not occ(c) or all(occ(add(c, e)) for e in ((-1, 0, 0), (0, -1, 0), (0, 0, -1))) for c in cells)
+    check("monument: the pile plus the giant corner is still a down-set (faces stay whole)", down)
+    # the word's faces are exposed and nothing stands in front of them
+    clear = all(not occ(add(c, (a, b, d))) for c in text_cells(T)
+                for a in range(1, 4) for b in range(-1, 3) for d in range(-1, 3))
+    check("monument: the space in front of the word, where cubes pop out, is empty", clear)
+    s2, s6 = math.sqrt(2), math.sqrt(6)
+    rt, up = (1 / s2, 0.0, -1 / s2), (-1 / s6, 2 / s6, -1 / s6)
+    mid = mul(add((5, MONO_Y - 1.5, 4 - 4.5), (0, 0, 0)), P)
+    y_mid = dot(mid, up)
+    check("monument: the word sits at mid-screen height", abs(y_mid) < 2.0, f"centre at y = {y_mid:.2f}")
+    # pop physics: a mosaic cube popped out by POP turns clear of the wall
+    angles = ANGLES + [peak_angle()]
+    nb = [(-1, b, d) for b in (-1, 0, 1) for d in (-1, 0, 1)] + [(0, b, d) for b in (-1, 0, 1) for d in (-1, 0, 1) if (b, d) != (0, 0)]
+    def hits(dpop):
+        return sum(cubes_overlap(cube_boxes((dpop, 0, 0), mv, ang), cube_boxes(mul(o, P)))
+                   for mv in TURNS for ang in angles for o in nb)
+    lo, hi = 0.0, 4.0
+    for _ in range(24):
+        m = (lo + hi) / 2
+        if hits(m):
+            lo = m
+        else:
+            hi = m
+    check("physics: a mosaic cube popped out by POP turns clear of the wall around it",
+          hi <= POP < hi + 0.1, f"least {hi:.4f}, POP {POP}")
+    slide = all(not cubes_overlap(cube_boxes((u, 0, 0)), cube_boxes(mul(o, P)))
+                for u in (0.3, 1.0, 2.0, 3.0) for o in nb)
+    check("physics: popping out and back in slides past the neighbours without cutting them", slide)
+    near_bad = 0
+    for c in text_cells(T):
+        body = cube_boxes(add(mul(c, P), (POP, 0, 0)), rng.choice(TURNS), rng.choice(angles))
+        for o in ((a, b, d) for a in range(0, 3) for b in range(-1, 2) for d in range(-1, 2)):
+            v = add(c, o)
+            if o != (0, 0, 0) and occ(v) and v not in text_cells(T):
+                near_bad += cubes_overlap(body, cube_boxes(mul(v, P)))
+    check("physics: popped out, a mosaic cube clears every pile and monument cube near it",
+          near_bad == 0)
+    same = all(mosaic_class(a) != mosaic_class(b) for a in text_cells(T) for b in text_cells(T)
+               if a != b and max(abs(a[1] - b[1]), abs(a[2] - b[2])) == 1)
+    far = all(norm(sub(mul(a, P), mul(b, P))) >= 2 * R for a in text_cells(T) for b in text_cells(T)
+              if a != b and mosaic_class(a) == mosaic_class(b))
+    check("physics: wall neighbours differ in class; same-class cubes are 2R apart, never touching",
+          same and far)
+
+
+def wall_state(t, k_cls, seqs):
+    """The shader's wallState(): (applied scramble moves, move in progress, pop).
+    seqs(e) -> the 8 scramble moves of epoch e. In each epoch the cube first
+    undoes this epoch's scramble (solve slot), holds the word, then applies the
+    next epoch's scramble (scramble slot)."""
+    e = math.floor(t / W_EPOCH)
+    u0 = t - e * W_EPOCH
+    def slot(u, undo, moves):
+        if u < 0:
+            return (moves if undo else []), None, 0.0
+        if u < POP_S:
+            return (moves if undo else []), None, POP * smooth(u / POP_S)
+        u -= POP_S
+        n = len(moves)
+        if u < n * W_MOVE:
+            j = int(u / W_MOVE)
+            f = u - j * W_MOVE
+            if undo:
+                mv = moves[n - 1 - j]
+                return moves[:n - 1 - j + 1], (mv, -mv[2] * ease(f / (W_MOVE * TURN)) * math.pi / 2), POP
+            mv = moves[j]
+            return moves[:j], (mv, mv[2] * ease(f / (W_MOVE * TURN)) * math.pi / 2), POP
+        u -= n * W_MOVE
+        return ([] if undo else moves), None, POP * (1 - smooth(min(u / POP_S, 1.0)))
+    if u0 < W_SCRAMBLE:
+        return slot(u0 - k_cls * W_SLOT, True, seqs(e % 35))
+    return slot(u0 - W_SCRAMBLE - k_cls * W_SLOT, False, seqs((e + 1) % 35))
+
+
+def test_wall_events(rng):
+    longest = 2 * POP_S + W_MOVES * W_MOVE
+    check("mosaic events: a pop, 8 moves and a push fit in one class slot", longest < W_SLOT,
+          f"{longest:.1f} s of {W_SLOT}")
+    jumps = pop_jumps = low = unsolved = overlap = 0
+    for _ in range(300):
+        k_cls = rng.randrange(4)
+        memo = {}
+        def seqs(e):
+            if e not in memo:
+                memo[e] = sequence(rng, W_MOVES)
+            return memo[e]
+        state = lambda t: wall_state(t % 4189.5, k_cls, seqs)
+        e = rng.randrange(35)
+        T0 = e * W_EPOCH
+        cuts = [T0, T0 + W_EPOCH, 4189.5]
+        for st0 in (T0 + k_cls * W_SLOT, T0 + W_SCRAMBLE + k_cls * W_SLOT):
+            cuts += [st0, st0 + POP_S, st0 + POP_S + W_MOVES * W_MOVE, st0 + 2 * POP_S + W_MOVES * W_MOVE]
+            cuts += [st0 + POP_S + j * W_MOVE for j in range(W_MOVES)]
+            cuts += [st0 + POP_S + j * W_MOVE + TURN * W_MOVE for j in range(W_MOVES)]
+        for b in cuts:
+            a1, i1, p1 = state(b - 1e-7)
+            a2, i2, p2 = state(b + 1e-7)
+            jumps += pose_gap(pose_of(a1, i1), pose_of(a2, i2)) > 1e-4
+            pop_jumps += abs(p1 - p2) > 1e-4
+        for k in range(1500):
+            t = T0 + W_EPOCH * k / 1500
+            a, inp, p = state(t)
+            if inp is not None and 1e-9 < abs(inp[1]) < math.pi / 2 - 1e-9:
+                low += p != POP
+            busy = p > 0
+            u = t - T0
+            mine = (k_cls * W_SLOT <= u < (k_cls + 1) * W_SLOT) or \
+                   (W_SCRAMBLE + k_cls * W_SLOT <= u < W_SCRAMBLE + (k_cls + 1) * W_SLOT)
+            overlap += busy and not mine
+        for k in range(40):
+            t = T0 + 4 * W_SLOT + (W_SCRAMBLE - 4 * W_SLOT) * k / 40
+            a, inp, p = state(t)
+            unsolved += bool(a) or inp is not None or p != 0
+    check("mosaic events: no cubie ever jumps (slots, epochs, the clock wrap)", jumps == 0, f"{jumps} jumps")
+    check("mosaic events: popping out and back is continuous", pop_jumps == 0)
+    check("mosaic events: every turn happens fully popped out", low == 0)
+    check("mosaic events: a cube is out only in its own class's slots", overlap == 0)
+    check("mosaic events: between the solve and the scramble the word stands exactly (80 s)", unsolved == 0)
+
+
 # ---- camera, colour scheme, easing, antialiasing ----------------------------------
 
 def test_camera():
@@ -884,6 +1179,9 @@ def main():
     test_schedule(rng)
     test_physics(rng)
     test_lifted_scene(rng)
+    test_mosaic(rng)
+    test_monument(rng)
+    test_wall_events(rng)
     test_loop()
     test_camera()
     test_easing()
