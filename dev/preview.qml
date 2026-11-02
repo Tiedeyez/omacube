@@ -33,6 +33,7 @@ ShellRoot {
     function wrap(x, m) { return ((x % m) + m) % m }
 
     PanelWindow {
+        id: win
         screen: Quickshell.screens[0]
         color: "transparent"
         anchors { top: true; left: true }
@@ -45,7 +46,9 @@ ShellRoot {
 
         ShaderEffect {
             id: fx
-            width: root.w; height: root.h
+            // grabs render at the window's scale (e.g. 1.25), so size the
+            // item in logical units to get exactly w x h pixels
+            width: root.w / (win.devicePixelRatio || 1); height: root.h / (win.devicePixelRatio || 1)
             fragmentShader: "file://" + Quickshell.env("OMACUBE_QSB")
             // same formulas as Service.qml
             readonly property real clock: root.wrap(root.t0 + root.frame / root.fps, 46084.5)
@@ -53,7 +56,10 @@ ShellRoot {
             property real drift: root.wrap(clock / 46084.5 * 1024 + 0.5 * root.turns, 1024) + root.driftOffset
             property real spin: 2.0943951024 * root.wrap(root.turns, 3)
             property real aspect: width / height
-            property real texel: 1 / height
+            property real texel: 1 / root.h
+            // OMACUBE_PIXEL=1: hard pixel edges (render at art-pixel size and
+            // upscale with nearest neighbour afterwards)
+            property real pixelArt: Quickshell.env("OMACUBE_PIXEL") === "1" ? 1 : 0
             property color c0: root.palette.stickers[0]
             property color c1: root.palette.stickers[1]
             property color c2: root.palette.stickers[2]

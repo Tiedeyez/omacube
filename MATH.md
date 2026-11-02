@@ -60,7 +60,7 @@ With the cap, the estimate never exceeds the true distance. Sphere tracing moves
 
 Rays start just above the stack. No cube point reaches above coordinate sum `R·√3 = 4.5`, and rays start at 4.6.
 
-A ray that runs alongside a face tumbled almost edge-on to the view moves in tiny steps. Typical rays hit in about 14 steps; the worst seen took about 217, so the budget is 256. If a ray still runs out within one pixel of a surface, it counts as a hit, since it's a silhouette pixel. Self-check 3 renders the step counts and finds no ray that runs out.
+A ray that runs alongside a face tumbled almost edge-on to the view moves in tiny steps. Typical rays hit in about 14 steps; the worst seen took about 220, so the budget is 256. If a ray still runs out within one pixel of a surface, it counts as a hit, since it's a silhouette pixel. Self-check 3 renders the step counts and finds no ray that runs out.
 
 ## 5. Real cube states
 
@@ -139,3 +139,44 @@ So opposite faces stay opposite, and every cube remains a legal state in any pal
 - **Theme switches.** The plugin re-reads the colours when `omarchy theme set` writes the new theme's name, and crossfades over 0.9 s.
 
 `node tools/check-palette.mjs` runs the plugin's own `Palette.js` against every installed theme. It also checks odd input (empty, garbage, oversized, CRLF), 2,000 random palettes, and that the Omacube theme gives exactly the classic cube.
+
+## 12. Pixel art
+
+By default the background is drawn as pixel art. Each art pixel covers exactly `pixelSize` screen pixels (4 by default), with no blending, so the image uses only the theme's exact colours.
+
+- **Exact size.** The shader renders into a texture of `ceil(screen size / pixelSize)` art pixels, which is shown with nearest-neighbour scaling. The canvas is sized in whole art pixels and centred, so it can overhang the screen edge by less than one art pixel. The screen size comes from the window's own scale factor (1.25 on a 3440x1440 screen at 125%). The screen object reports a rounded-up 2 instead, which rendering doesn't use.
+- **Hard edges.** A pixel is either all sticker or all plastic: `step(sd, 0)` instead of the smooth one-pixel ramp.
+- **Whole-pixel scrolling.** As the camera drifts, its offset in the screen plane is rounded to whole art pixels: `pan = rt·round(pan·rt / px)·px + up·round(pan·up / px)·px`. The drift direction lies in the screen plane (it's perpendicular to the view direction), so this moves the picture by exact pixel steps and edges never shimmer.
+
+Pixel art renders about 1/30 of the screen's pixels. On an RTX 4070 SUPER at 3440x1440, it added 2–4 W of GPU power, against about 9 W for the smooth mode.
+
+## 13. Cube-face tiling
+
+The Omacube theme tiles windows with a Hyprland Lua layout, `theme/omacube/cubeface.lua`. Each workspace is one 3x3 face, and its slots are numbered like stickers:
+
+```
+0 1 2
+3 4 5
+6 7 8
+```
+
+**Moves.** Each move is a permutation of the nine slots: a window in slot `s` moves to slot `move[s]`.
+
+- A clockwise face turn sends position (row, column) to (column, 2 − row). In cycle notation that is (0 2 8 6)(1 5 7 3), and the centre stays put. A counter-clockwise turn is its inverse.
+- A row turn sends (r, c) to (r, c ± 1 mod 3) for one row, which is a 3-cycle. A column turn does the same for one column.
+
+**Tiling.** Rows and columns with no window collapse. The rest are split into equal parts, and each window spreads over the empty slots beside it in its row. Box edges are rounded once and shared, so neighbouring windows always meet exactly. New windows take the first free slot in the order 4, 5, 7, 8, 3, 6, 1, 0, 2, so 1–9 windows tile as 1, 2, 2+1, 2+2, 3+2, 3+3, 1+3+3, 2+3+3 and 3+3+3 per row.
+
+**Parity.** A 4-cycle is an odd permutation, so a face turn (two 4-cycles) is even. A 3-cycle is even too, so every turn is an even permutation of the windows. Any sequence of turns is therefore even, and a single swap of two windows (odd) is unreachable. That's the same law that stops a real cube from swapping two pieces on their own.
+
+`lua tools/check-cubeface.lua` checks all of this:
+
+- every move is a permutation, and four face turns, or three row turns, give the identity
+- the corner and edge cycles are exactly as above
+- a face turn moves every window's box centre exactly by a 90° rotation about the face centre
+- all 511 window arrangements cover the face exactly, with no gaps and no overlaps, on three screen sizes
+- windows keep their slots as others come and go
+- the arrivals give the shapes above
+- a search of every reachable arrangement finds exactly the 181,440 even ones (half of 9!), so the turns generate the whole alternating group A₉, and the single swap is never reached
+
+Hyprland names Lua layouts `lua:<name>` and registers each name only once per session. Omarchy re-runs a theme's Lua on every config reload, so the theme registers small wrappers once and points them at the newest copy of the module on each reload. Window places survive a reload.

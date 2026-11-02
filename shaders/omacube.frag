@@ -23,6 +23,7 @@ layout(std140, binding = 0) uniform buf {
     float spin;     // view roll, radians
     float aspect;   // width / height
     float texel;    // 1 / rendered height in pixels
+    float pixelArt; // 1: hard pixel edges and pixel-snapped drift; 0: smooth
     vec4 c0;        // sticker colours of the solved cube: +x, -x, +y, -y, +z, -z
     vec4 c1;
     vec4 c2;
@@ -116,9 +117,11 @@ bool occupied(vec3 id) {
 #endif
     float room = s + 3.0;               // 0..3: cone depth left inside the band
     for (int a = 0; a < 4; a++) {
+        if (float(a) > room + 0.5) break;
         for (int b = 0; b < 4; b++) {
+            if (float(a + b) > room + 0.5) break;
             for (int c = 0; c < 4; c++) {
-                if (float(a + b + c) > room + 0.5) continue;
+                if (float(a + b + c) > room + 0.5) break;
                 if (hash13(cellKey(id - vec3(float(a), float(b), float(c)))) >= FILL) return false;
             }
         }
@@ -269,11 +272,24 @@ struct Hit {
 // is farther than R from its centre, so those cubes are at least
 // 3 + min|q0| - R away. Taking that as a cap keeps the estimate from ever
 // exceeding the true distance, so the march cannot step through a cube.
+// Per-ray cache. A ray usually spends several steps among the same eight
+// cells, so each cell's occupancy and cube state is worked out once, the
+// first time the ray needs it, and reused while the ray stays there.
+vec3 gId0;
+vec3 gSd;
+float gKnown[8];                        // 0 = not worked out, 1 = empty, 2 = a cube
+Cube gCube[8];
+
 float mapScene(vec3 p, out Hit hit) {
     vec3 id0 = floor(p * (1.0 / P) + 0.5);
     vec3 q0 = p - id0 * P;
     vec3 sd = vec3(q0.x >= 0.0 ? 1.0 : -1.0, q0.y >= 0.0 ? 1.0 : -1.0, q0.z >= 0.0 ? 1.0 : -1.0);
     vec3 aq = abs(q0);
+    if (id0 != gId0 || sd != gSd) {
+        gId0 = id0;
+        gSd = sd;
+        for (int i = 0; i < 8; i++) gKnown[i] = 0.0;
+    }
 #if defined(OMACUBE_NO_FAR_BOUND)
     float d = 1e9;      // the previous scheme, kept only to demonstrate its bug
 #else
@@ -285,15 +301,18 @@ float mapScene(vec3 p, out Hit hit) {
         vec3 id = id0 + o * sd;
         vec3 q = p - id * P;
         if (length(q) - R > d) continue;                // too far to matter
-        vec3 key = cellKey(id);
-        if (!occupied(id)) continue;
-        Cube cb = cubeState(key);
+        if (gKnown[i] < 0.5) {
+            gKnown[i] = occupied(id) ? 2.0 : 1.0;
+            if (gKnown[i] > 1.5) gCube[i] = cubeState(cellKey(id));
+        }
+        if (gKnown[i] < 1.5) continue;
+        Cube cb = gCube[i];
         vec3 cell, lp;
         bool moving;
         float dc = cubeSDF(q, cb.axis, cb.layer, cb.ang, cell, lp, moving);
         if (dc < d) {
             d = dc;
-            hit.cell = cell; hit.lp = lp; hit.key = key; hit.cid = id;
+            hit.cell = cell; hit.lp = lp; hit.key = cellKey(id); hit.cid = id;
             hit.id = cb.id; hit.cycKey = cb.cycKey; hit.pre = cb.pre;
             hit.axis = cb.axis; hit.ang = moving ? cb.ang : 0.0;
 #if defined(OMACUBE_DEBUG)
@@ -383,6 +402,8 @@ float mapRef(vec3 p) {
 #endif
 
 void main() {
+    gId0 = vec3(1e9);                                  // empty ray cache
+    gSd = vec3(0.0);
     vec2 uv = (qt_TexCoord0 - 0.5) * vec2(aspect, -1.0) * (2.0 * VIEW);
 
     // Orthographic camera down the (1,1,1) diagonal. rt, up and fw are
@@ -399,7 +420,15 @@ void main() {
     // The camera drifts along (3,3,-6), which lies in the plane of the
     // stack's top, so it stays the same height above the stack. Rays start
     // at coordinate sum 4.6: no part of any cube reaches above 4.5.
-    vec3 ro = vec3(3.0, 3.0, -6.0) * drift + rt * uv.x + up * uv.y - fw * 2.6558;
+    vec3 pan = vec3(3.0, 3.0, -6.0) * drift;
+    if (pixelArt > 0.5) {
+        // Pixel art: move the camera only in whole pixels, so the scene
+        // slides by exact pixel steps instead of shimmering between them.
+        // pan lies in the screen plane (it is perpendicular to fw).
+        float px = 2.0 * VIEW * texel;
+        pan = rt * (floor(dot(pan, rt) / px + 0.5) * px) + up * (floor(dot(pan, up) / px + 0.5) * px);
+    }
+    vec3 ro = pan + rt * uv.x + up * uv.y - fw * 2.6558;
 
     // Sphere tracing: mapScene never overestimates, so stepping by d can
     // never pass through a cube. Most rays hit in about 9 steps. A ray that
@@ -467,7 +496,8 @@ void main() {
             vec2 fx = fa < 0.5 ? dx.yz : (fa < 1.5 ? dx.xz : dx.xy);
             vec2 fy = fa < 0.5 ? dy.yz : (fa < 1.5 ? dy.xz : dy.xy);
             float w = max(abs(dot(g, fx)) + abs(dot(g, fy)), 1e-5);
-            float cover = clamp(0.5 - sd / w, 0.0, 1.0);
+            // pixel art: a pixel is all sticker or all plastic, theme colours only
+            float cover = pixelArt > 0.5 ? step(sd, 0.0) : clamp(0.5 - sd / w, 0.0, 1.0);
             if (cover > 0.0) {
                 // blend in linear light, then back to sRGB
                 vec3 body = pow(bodyColor.rgb, vec3(2.2));

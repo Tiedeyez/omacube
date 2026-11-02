@@ -50,7 +50,12 @@ These are in the repository but run only if you run them yourself:
 - `tools/check-math.py` and `tools/png-stats.py` are Python standard-library scripts. They read only the PNG files you name, write nothing, and start no processes.
 - `tools/check-palette.mjs` is a Node script. It reads `Palette.js`, the Omacube theme's `colors.toml`, and the `colors.toml` of each installed theme (in `/usr/share/omarchy/themes/` and `~/.config/omarchy/themes/`, or the folders you name). It writes nothing and starts no processes.
 - `dev/preview.qml` reads the `colors.toml` you point `OMACUBE_THEME` at, if any.
-- `theme/omacube/` is a plain Omarchy theme: `colors.toml`, `hyprland.lua` (border colours, rounding, animation curves), `icons.theme`, the stock Omarchy wallpaper and unlock art recoloured, and `preview.png`. It's used only if you copy it into `~/.config/omarchy/themes/` and select it. Its `hyprland.lua` changes Hyprland settings while the theme is active, and those changes are gone when you switch themes.
+- `dev/sticker-window.sh` runs `/usr/bin/foot` with a sticker colour and a big number, then `/usr/bin/sleep infinity` inside it. It's a demo window for trying out the tiling; close it like any other window.
+- `tools/check-cubeface.lua` is a plain Lua script that loads `cubeface.lua` and checks its maths. It reads nothing else and writes nothing.
+- `theme/omacube/` is an Omarchy theme, used only if you copy it into `~/.config/omarchy/themes/` and select it. It holds `colors.toml`, `icons.theme`, the stock Omarchy wallpaper and unlock art recoloured, `preview.png`, and two Lua files that Hyprland runs while the theme is active:
+  - `hyprland.lua` sets border colours, rounding and animation curves. It makes the cube-face layout the tiling layout and binds six keys to cube turns (SUPER+ALT+R, SUPER+ALT+SHIFT+R, SUPER+CTRL+ALT+arrows).
+  - `cubeface.lua` is the layout: it decides where each tiled window goes. It reads only the window list Hyprland hands it and the address of the focused window. It starts no processes, reads and writes no files, and opens no network connections.
+  All of this is undone when you switch to another theme. One thing outlives the switch: the layout name `lua:omacube` stays registered with Hyprland until it restarts. It's unused, but it's there.
 
 ## What it costs
 

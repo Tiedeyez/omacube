@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "author": "Tiedeyez",
   "license": "MIT",
-  "description": "An animated desktop background of an endless isometric stack of 3x3 puzzle cubes, drawn flat in sticker colours. Cubes turn their layers and tumble on their own clocks while the field drifts slowly past, and every workspace switch rolls the whole stack 120 degrees so it clicks back into line like a cube turn. One GPU fragment shader, no files, processes or network.",
+  "description": "Your desktop as a 3x3 puzzle cube. An animated pixel-art background of an endless isometric stack of cubes that turn their layers and tumble. Every cube is a legal cube state, coloured from your current Omarchy theme. Workspace switches roll the whole stack 120 degrees about the cube corner. The optional Omacube theme adds the classic colours and cube-face tiling: windows tile on a 3x3 face and move by real face and layer turns. One GPU fragment shader; reads only the theme colours, no processes or network.",
   "kinds": [
     "service"
   ],

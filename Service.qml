@@ -22,7 +22,11 @@ Item {
   id: root
 
   // ---- tuning ------------------------------------------------------------
-  // Fraction of screen resolution the shader renders at (then upscaled).
+  // Pixel art: each art pixel is this many screen pixels, drawn with hard
+  // edges in the theme's exact colours. 0 = smooth, antialiased rendering at
+  // renderScale. Pixel art is also far cheaper: about 1/30 of the pixels.
+  readonly property int pixelSize: 4
+  // Smooth mode only: fraction of screen resolution the shader renders at.
   readonly property real renderScale: 0.75
   // Redraws per second. The shader only redraws when the clock ticks.
   readonly property int fps: 24
@@ -145,11 +149,22 @@ Item {
 
       Item {
         id: canvas
-        anchors.fill: parent
-        readonly property int texW: Math.max(2, Math.round(width * root.renderScale))
-        readonly property int texH: Math.max(2, Math.round(height * root.renderScale))
+        // Pixel art needs a whole number of screen pixels per art pixel, so
+        // the canvas is sized in art pixels and may overhang the screen edge
+        // by less than one art pixel; it stays centred.
+        // the window's own scale (1.25 here); the screen object reports a
+        // rounded-up value (2) that rendering does not use
+        readonly property real dpr: panel.devicePixelRatio || 1
+        readonly property bool pixelArt: root.pixelSize > 0
+        readonly property int texW: pixelArt ? Math.max(2, Math.ceil(panel.width * dpr / root.pixelSize))
+                                             : Math.max(2, Math.round(panel.width * root.renderScale))
+        readonly property int texH: pixelArt ? Math.max(2, Math.ceil(panel.height * dpr / root.pixelSize))
+                                             : Math.max(2, Math.round(panel.height * root.renderScale))
+        width: pixelArt ? texW * root.pixelSize / dpr : panel.width
+        height: pixelArt ? texH * root.pixelSize / dpr : panel.height
+        anchors.centerIn: parent
         layer.enabled: true
-        layer.smooth: true
+        layer.smooth: !pixelArt                 // nearest-neighbour upscale for pixel art
         layer.textureSize: Qt.size(texW, texH)
 
         ShaderEffect {
@@ -160,6 +175,7 @@ Item {
           property real spin: root.spin
           property real aspect: width / Math.max(1, height)
           property real texel: 1 / canvas.texH
+          property real pixelArt: canvas.pixelArt ? 1 : 0
           property color c0: root.palette.stickers[0]
           property color c1: root.palette.stickers[1]
           property color c2: root.palette.stickers[2]
