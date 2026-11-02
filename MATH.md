@@ -92,18 +92,18 @@ Each cube runs a 14-slot cycle: three moves, four slots of rest, the same three 
 
 ## 7. Loops with no seam
 
-The shader works in 32-bit floats, so its clock has to wrap. Two loops are arranged so that wrapping changes nothing on screen.
+The shader works in 32-bit floats, so its clock has to wrap. The loop is arranged so that wrapping changes nothing on screen.
 
 - **The cube loop: 4189.5 s (about 70 minutes).** Each cube runs at a speed of m/8 with m in {6, 7, 8, 9, 10, 12}, so its cycle lasts 13.3 s × m / 8. Since lcm(6, 7, 8, 9, 10, 12) = 2520, the loop of 13.3 s × 2520 / 8 = 4189.5 s is a whole number of cycles at every speed. Each cube's moves depend on its cycle number modulo that count, so they also repeat exactly.
-- **The drift loop: 46084.5 s, exactly 11 cube loops (about 12.8 hours).** The camera drifts along the lattice vector (3, 3, −6), which lies in the plane of the stack's top, so it stays the same height above the stack. Every cell's random choices come from its id modulo 1024 on each axis. One drift loop moves 1024 steps, which shifts every cell id by 1024 × (1, 1, −2): the same values modulo 1024, and the same layer.
-- **Workspace turns** wrap the same way. The roll wraps every 3 turns (360°), and the half-step slide that goes with each turn wraps every 1024 lattice steps.
+- **The field holds still.** The camera moves only with workspace turns: half a lattice step along (3, 3, −6) per turn. That vector lies in the plane of the stack's top, so the camera stays the same height above the stack. Every cell's random choices come from its id modulo 1024 on each axis, so a 1024-step slide shifts every cell id by 1024 × (1, 1, −2): the same values modulo 1024, and the same layer.
+- **Workspace turns** wrap with no jump. The roll wraps every 3 turns (360°), and the slide every 1024 lattice steps.
 
-`check-math.py` verifies both loop lengths with exact fractions. Self-check 5 renders the picture at 0.5 s, then again one cube loop later and one drift loop later, and compares them:
+`check-math.py` verifies both loop lengths with exact fractions. Self-check 5 renders the picture at 0.5 s, then again one cube loop later and one 1024-step slide later, and compares them:
 
 | Compared with the frame at 0.5 s | Pixels that differ |
 |---|---|
 | One cube loop later | 0.011% |
-| One drift loop later | 0.005% |
+| One 1024-step slide later | 0.005% |
 | An ordinary frame 1/24 s later | 6.7% |
 
 The tiny remainder is float rounding, far below normal motion. Keeping the cube loop short keeps the shader's time precise to about half a millisecond.
@@ -146,7 +146,7 @@ By default the background is drawn as pixel art. Each art pixel covers exactly `
 
 - **Exact size.** The shader renders into a texture of `ceil(screen size / pixelSize)` art pixels, which is shown with nearest-neighbour scaling. The canvas is sized in whole art pixels and centred, so it can overhang the screen edge by less than one art pixel. The screen size comes from the window's own scale factor (1.25 on a 3440x1440 screen at 125%). The screen object reports a rounded-up 2 instead, which rendering doesn't use.
 - **Hard edges.** A pixel is either all sticker or all plastic: `step(sd, 0)` instead of the smooth one-pixel ramp.
-- **Whole-pixel scrolling.** As the camera drifts, its offset in the screen plane is rounded to whole art pixels: `pan = rt·round(pan·rt / px)·px + up·round(pan·up / px)·px`. The drift direction lies in the screen plane (it's perpendicular to the view direction), so this moves the picture by exact pixel steps and edges never shimmer.
+- **Whole-pixel scrolling.** As the camera slides on a workspace turn, its offset in the screen plane is rounded to whole art pixels: `pan = rt·round(pan·rt / px)·px + up·round(pan·up / px)·px`. The drift direction lies in the screen plane (it's perpendicular to the view direction), so this moves the picture by exact pixel steps and edges never shimmer.
 
 Pixel art renders about 1/30 of the screen's pixels. On an RTX 4070 SUPER at 3440x1440, it added 2–4 W of GPU power, against about 9 W for the smooth mode.
 

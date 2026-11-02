@@ -16,7 +16,7 @@ ShellRoot {
     readonly property real t0: parseFloat(Quickshell.env("OMACUBE_T0") || "3")
     readonly property real turns: parseFloat(Quickshell.env("OMACUBE_TURNS") || "0")
     // added after wrapping, to test that the scene is periodic: one cube
-    // loop (4189.5 s) or one drift loop (1024) later must look the same
+    // loop (4189.5 s) or one 1024-step slide later must look the same
     readonly property real timeOffset: parseFloat(Quickshell.env("OMACUBE_TIME_OFFSET") || "0")
     readonly property real driftOffset: parseFloat(Quickshell.env("OMACUBE_DRIFT_OFFSET") || "0")
     readonly property int w: parseInt(Quickshell.env("OMACUBE_W") || "1920")
@@ -51,9 +51,9 @@ ShellRoot {
             width: root.w / (win.devicePixelRatio || 1); height: root.h / (win.devicePixelRatio || 1)
             fragmentShader: "file://" + Quickshell.env("OMACUBE_QSB")
             // same formulas as Service.qml
-            readonly property real clock: root.wrap(root.t0 + root.frame / root.fps, 46084.5)
+            readonly property real clock: root.wrap(root.t0 + root.frame / root.fps, 4189.5)
             property real time: root.wrap(clock, 4189.5) + root.timeOffset
-            property real drift: root.wrap(clock / 46084.5 * 1024 + 0.5 * root.turns, 1024) + root.driftOffset
+            property real drift: root.wrap(0.5 * root.turns, 1024) + root.driftOffset
             property real spin: 2.0943951024 * root.wrap(root.turns, 3)
             property real aspect: width / height
             property real texel: 1 / root.h

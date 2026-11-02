@@ -103,7 +103,7 @@ After editing `Service.qml`, run `omarchy restart shell`.
 - Smooth mode (`pixelSize: 0`) added about 9 W on the same machine.
 - It stops redrawing while a fullscreen window covers the screen.
 - Any animated wallpaper makes the compositor repaint the screen on every frame. On integrated graphics, expect a bigger relative cost; a larger `pixelSize` or a lower `fps` helps.
-- The animation loops seamlessly: the cubes every 70 minutes, the drifting field every 12.8 hours. Nothing jumps when either loop wraps.
+- The animation loops seamlessly: the cubes every 70 minutes. The field holds still; it only slides with workspace turns. Nothing jumps when the loop wraps.
 
 ## How it's checked
 

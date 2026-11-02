@@ -17,7 +17,7 @@ brute force rather than the shader's shortcuts:
   colours    "undo every move back to solved" gives the same colours as
              physically turning a solved cube, and every state is legal
   cycle      colours and geometry agree at every slot boundary of a cycle
-  loop       the clock wrap and the drift wrap are seamless
+  loop       the clock wrap and the workspace-slide wrap are seamless
   camera     the view is a true, unmirrored isometric projection, and the
              stickers use the standard colour scheme
   easing     the turn curve starts at 0, ends exactly at 1, overshoots ~10%
@@ -534,19 +534,18 @@ def test_cycle(rng):
     check("cycle: slot position always lands in [0, 14)", ok)
 
 
-# ---- loop and drift -----------------------------------------------------------
+# ---- loop and slide -----------------------------------------------------------
 
 def test_loop():
     speeds = (6, 7, 8, 9, 10, 12)
     cube_loop = Fraction(133, 10) * 2520 / 8      # seconds, = 4189.5
-    drift_loop = 11 * cube_loop                   # = 46084.5
-    ok = cube_loop == Fraction(8379, 2) and drift_loop == Fraction(92169, 2)
+    ok = cube_loop == Fraction(8379, 2)
     for m in speeds:
         cycles = cube_loop / (SLOT * m / 8 * CYCLE)
         ok &= cycles.denominator == 1 and cycles == Fraction(2520, m)
     check("loop: 4189.5 s is a whole number of cycles at every speed m/8, "
-          "m in {6,7,8,9,10,12}; the drift loop is exactly 11 of them", ok)
-    # drift wraps every 1024 lattice steps of (3, 3, -6): cell ids shift by
+          "m in {6,7,8,9,10,12}", ok)
+    # the workspace slide wraps every 1024 lattice steps of (3, 3, -6): cell ids shift by
     # 1024 * (1, 1, -2), which keeps id mod 1024 and the layer sum unchanged
     rng = random.Random(7)
     shift = (1024, 1024, -2048)
@@ -556,7 +555,7 @@ def test_loop():
         moved = add(cid, shift)
         same &= tuple(v % 1024 for v in cid) == tuple(v % 1024 for v in moved)
         same &= sum(cid) == sum(moved)
-    check("loop: the drift wrap maps every cell onto one with the same hash and layer", same)
+    check("loop: the slide wrap maps every cell onto one with the same hash and layer", same)
 
 
 # ---- camera, colour scheme, easing, antialiasing ----------------------------------

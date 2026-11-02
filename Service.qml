@@ -68,11 +68,9 @@ Item {
   // Every cube's cycle lasts 13.3 s * m / 8 for some m in {6,7,8,9,10,12},
   // and 4189.5 s (about 70 min) is a whole number of cycles for every m, so
   // the shader's clock wraps there with nothing changing on screen. The field
-  // drifts 1024 lattice steps every 11 of those loops (about 12.8 h), and the
-  // shader's cell hash repeats every 1024 cells, so the drift wraps
-  // seamlessly too. Short loops keep the 32-bit time in the shader precise.
+  // itself holds still; only workspace turns slide it. A short loop keeps the
+  // 32-bit time in the shader precise.
   readonly property real cubeLoop: 4189.5
-  readonly property real driftLoop: 46084.5
   property real clock: 0
 
   // Net workspace steps; turnPos eases towards it. One step rolls the view
@@ -85,7 +83,7 @@ Item {
 
   function wrap(x, m) { return ((x % m) + m) % m }
   readonly property real spin: 2.0943951024 * wrap(turnPos, 3)
-  readonly property real drift: wrap(clock / driftLoop * 1024 + 0.5 * turnPos, 1024)
+  readonly property real drift: wrap(0.5 * turnPos, 1024)
 
   readonly property bool anyVisible: {
     var ws = screenWindows.instances
@@ -105,7 +103,7 @@ Item {
       var now = Date.now()
       var dt = Math.min((now - last) / 1000, 0.25)
       last = now
-      root.clock = (root.clock + dt) % root.driftLoop
+      root.clock = (root.clock + dt) % root.cubeLoop
     }
   }
 
