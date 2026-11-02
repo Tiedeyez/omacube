@@ -16,9 +16,11 @@ ShellRoot {
     readonly property real t0: parseFloat(Quickshell.env("OMACUBE_T0") || "3")
     readonly property real turns: parseFloat(Quickshell.env("OMACUBE_TURNS") || "0")
     // added after wrapping, to test that the scene is periodic: one cube
-    // loop (4189.5 s) or one 1024-step slide later must look the same
+    // loop (4189.5 s) or one 3072-step slide (3072 * 3 sqrt 2 units) later
+    // must look the same. OMACUBE_PAN also moves the camera, to frame a spot.
     readonly property real timeOffset: parseFloat(Quickshell.env("OMACUBE_TIME_OFFSET") || "0")
-    readonly property real driftOffset: parseFloat(Quickshell.env("OMACUBE_DRIFT_OFFSET") || "0")
+    readonly property real panOffset: parseFloat(Quickshell.env("OMACUBE_PAN_OFFSET") || "0")
+        + parseFloat(Quickshell.env("OMACUBE_PAN") || "0")
     readonly property int w: parseInt(Quickshell.env("OMACUBE_W") || "1920")
     readonly property int h: parseInt(Quickshell.env("OMACUBE_H") || "1080")
     property int frame: 0
@@ -53,9 +55,10 @@ ShellRoot {
             // same formulas as Service.qml
             readonly property real clock: root.wrap(root.t0 + root.frame / root.fps, 4189.5)
             property real time: root.wrap(clock, 4189.5) + root.timeOffset
-            property real drift: root.wrap(0.5 * root.turns, 1024) + root.driftOffset
-            property real spin: 2.0943951024 * root.wrap(root.turns, 3)
+            property real pan: root.wrap(root.turns * 30 * aspect, 3072 * 3 * Math.SQRT2) + root.panOffset
             property real aspect: width / height
+            property var glyphs: glyphAtlas
+            Image { id: glyphAtlas; source: Qt.resolvedUrl("glyphs.png"); visible: false; smooth: true; asynchronous: false }
             property real texel: 1 / root.h
             // OMACUBE_PIXEL=1: hard pixel edges (render at art-pixel size and
             // upscale with nearest neighbour afterwards)

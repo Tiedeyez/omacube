@@ -20,7 +20,8 @@ Nothing. The plugin creates no files, folders, caches or settings.
 | What | How | Why |
 |---|---|---|
 | `shaders/omacube.frag.qsb` (in the plugin folder) | Qt's `ShaderEffect` loads it | The compiled shader that draws the background |
-| The focused workspace ID, each monitor's active workspace, and whether that workspace has a fullscreen window | Quickshell's built-in `Quickshell.Hyprland` module, from Hyprland's event socket | The 120-degree turn on a workspace switch, and pausing while a fullscreen window covers the screen |
+| `glyphs.png` (in the plugin folder) | A hidden Qt `Image`, handed to the shader as a texture | The Omarchy logo and O M A R C H Y printed on the word cubes |
+| The focused workspace ID, each monitor's active workspace, and whether that workspace has a fullscreen window | Quickshell's built-in `Quickshell.Hyprland` module, from Hyprland's event socket | The sideways slide on a workspace switch, and pausing while a fullscreen window covers the screen |
 | The list of screens | `Quickshell.screens` | One background surface per screen |
 | `~/.local/state/omarchy/current/theme/colors.toml` | Quickshell's `FileView`, the same way Omarchy's own shell reads it | The sticker and plastic colours. Only `key = "#rrggbb"` lines are used, and only within the first 64 KiB and 512 lines; everything else is ignored |
 | `~/.local/state/omarchy/current/theme.name` | `FileView`, watched for changes; its content is never used | `omarchy theme set` rewrites it after switching themes, which tells the plugin to read `colors.toml` again |
@@ -45,11 +46,12 @@ None. There are no listening sockets, no outbound connections, no telemetry, no 
 These are in the repository but run only if you run them yourself:
 
 - `tools/build-shader.sh` runs `/usr/lib/qt6/bin/qsb` to rebuild `shaders/omacube.frag.qsb` from `shaders/omacube.frag`. It writes only that file, or the output path you pass it.
+- `tools/build-glyphs.sh` runs ImageMagick (`magick`) to rebuild `glyphs.png`. It reads `/usr/share/fonts/omarchy/omarchy.ttf` and `~/.local/share/fonts/omarchy-font.ttf` (or the fonts in `LOGO_FONT` and `WORD_FONT`), writes temporary cells to a `mktemp` folder it deletes, and writes only `glyphs.png`.
 - `dev/preview.sh` runs `tools/build-shader.sh` (unless you pass a compiled shader), then `/usr/bin/qs -p dev/preview.qml` for up to 300 seconds. That shows a 1x1 click-through surface on the `bottom` layer and saves numbered PNG frames to `./frames/`, or to the folder you pass as the first argument. `dev/preview.qml` reads only its own `OMACUBE_*` environment variables.
 - `dev/selfcheck.sh` builds debug versions of the shader into `./frames/selfcheck/`, renders them with `dev/preview.sh`, and counts failing pixels with `/usr/bin/python3 -I tools/png-stats.py`. It writes only inside `./frames/`.
-- `tools/check-math.py` and `tools/png-stats.py` are Python standard-library scripts. They read only the PNG files you name, write nothing, and start no processes.
+- `tools/check-math.py` and `tools/png-stats.py` are Python standard-library scripts. They read only the PNG files you name (`check-math.py` also reads `glyphs.png`), write nothing, and start no processes.
 - `tools/check-palette.mjs` is a Node script. It reads `Palette.js`, the Omacube theme's `colors.toml`, and the `colors.toml` of each installed theme (in `/usr/share/omarchy/themes/` and `~/.config/omarchy/themes/`, or the folders you name). It writes nothing and starts no processes.
-- `dev/preview.qml` reads the `colors.toml` you point `OMACUBE_THEME` at, if any.
+- `dev/preview.qml` reads the `colors.toml` you point `OMACUBE_THEME` at, if any, and the copy of `glyphs.png` that `dev/preview.sh` stages next to it.
 - `dev/sticker-window.sh` runs `/usr/bin/foot` with a sticker colour and a big number, then `/usr/bin/sleep infinity` inside it. It's a demo window for trying out the tiling; close it like any other window.
 - `tools/check-cubeface.lua` is a plain Lua script that loads `cubeface.lua` and checks its maths. It reads nothing else and writes nothing.
 - `theme/omacube/` is an Omarchy theme, used only if you copy it into `~/.config/omarchy/themes/` and select it. It holds `colors.toml`, `icons.theme`, the stock Omarchy wallpaper and unlock art recoloured, `preview.png`, and two Lua files that Hyprland runs while the theme is active:
@@ -59,7 +61,7 @@ These are in the repository but run only if you run them yourself:
 
 ## What it costs
 
-An animated background makes the compositor repaint every frame, including blur behind translucent windows. In testing on an RTX 4070 SUPER at 3440x1440, GPU power went from about 6.5 W to about 16.5 W with the plugin enabled. Redrawing stops while a fullscreen window covers the screen. See the README for how to lower the frame rate and resolution.
+An animated background makes the compositor repaint every frame, including blur behind translucent windows. The default renders at 6K and is heavy: on an RTX 4070 SUPER at 3440x1440, whole-GPU power was about 147 W with the background showing (GPU at full clock, 76% busy), against about 48 W at the screen's own resolution and about 16 W as pixel art. Redrawing stops while a fullscreen window covers the screen. See the README's Settings and Performance sections for how to lower the resolution and frame rate.
 
 ## Maintainer and licence
 
@@ -72,8 +74,8 @@ Tiedeyez, MIT licence (see [LICENSE](LICENSE)).
 grep -nE "Process|execDetached|XMLHttpRequest|Socket|saveToFile|setText" Service.qml Palette.js
 # expected: no output
 
-# its only file reads are the two theme files listed above:
-grep -nE "FileView|path:|Quickshell.env" Service.qml
+# its only file reads are the two theme files listed above, plus its own glyphs.png:
+grep -nE "FileView|path:|source:|Quickshell.env" Service.qml
 
 # rebuild the shader from source and compare:
 tools/build-shader.sh && git status --short shaders/

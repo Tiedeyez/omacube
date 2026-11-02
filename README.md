@@ -1,17 +1,19 @@
 # Omacube
 
-Your Omarchy desktop as a 3x3 puzzle cube. Omacube is an animated pixel-art background: an endless isometric stack of 3x3 cubes that turn their layers and tumble. Its companion theme tiles your windows on a 3x3 cube face, and they move by real cube turns.
+Your Omarchy desktop as a 3x3 puzzle cube. Omacube is an animated background: an endless isometric stack of 3x3 cubes that turn their layers and tumble, and now and then spell the Omarchy lockup. Its companion theme tiles your windows on a 3x3 cube face, and they move by real cube turns.
 
 ![Omacube](preview.png)
 
-- **An endless stack.** The view looks straight down a cube's diagonal at an infinite pile of cubes stacked into towers, staircases and hexagonal stars. Every cube rests on the cubes behind it, so you only ever see whole cubes and whole faces. The field drifts slowly past.
-- **Real cubes, real turns.** Every cube is a legal puzzle state: a solved cube put through its own scramble. Each one runs on its own clock. It makes three moves, each a single layer turn or a whole-cube tumble, rests, then undoes them in reverse. Sticker colours travel with the turning layers.
-- **Pixel art.** Chunky pixels with hard edges, only your theme's exact colours, and a field that scrolls in whole pixels, so nothing shimmers. It is also very light on the GPU.
-- **Workspaces turn the stack.** Every workspace switch rolls the whole stack 120 degrees with a flick-and-settle overshoot. That's a rotation about the cube's corner (one of a cube's 24 rotations), so the pattern clicks back into line like a cube turn.
+- **An endless stack.** The view looks straight down a cube's diagonal at an infinite pile of cubes stacked into towers, staircases and hexagonal stars. Every cube rests on the cubes behind it, so you only ever see whole cubes and whole faces.
+- **Real cubes, real turns.** Every cube is a legal puzzle state: a solved cube put through its own scramble. A cube makes three moves, each a single layer turn or a whole-cube tumble, rests, then undoes them in reverse. Sticker colours travel with the turning layers.
+- **Real physics.** Nothing ever passes through anything. Only cubes with nothing in front of them can move; each slides out of the pile, towards you, far enough that its turning layers clear every neighbour, and settles back afterwards. Neighbours take turns, so two never collide.
+- **It spells Omarchy.** Some rows of cubes are picture cubes printed with the Omarchy logo and O M A R C H Y. Every couple of minutes a row speed-solves itself, letter by letter, holds the word for half a minute, and scrambles again.
+- **6K.** It renders at 6144 pixels across and scales down to your screen, for clean edges. Pixel art (hard pixels in your theme's exact colours) is one setting away, and far lighter on the GPU.
+- **Workspaces slide the stack.** Every workspace switch slides the field one screen width sideways, with your windows, on the same flick-and-settle curve.
 - **Your theme's colours.** The cubes take their sticker colours from your current Omarchy theme and crossfade when you switch themes. For the classic cube colours, pick the Omacube theme in the theme switcher.
 - **Cube-face tiling** (with the Omacube theme). Each workspace is a 3x3 cube face. Windows tile into it like stickers and move by real face turns and layer turns.
 
-The plugin is one GPU fragment shader. It reads only your current theme's colours, writes no files, runs no processes and makes no network connections. See [DISCLOSURE.md](DISCLOSURE.md).
+The plugin is one GPU fragment shader. It reads only your current theme's colours and its own glyph image, writes no files, runs no processes and makes no network connections. See [DISCLOSURE.md](DISCLOSURE.md).
 
 ## Install
 
@@ -72,7 +74,7 @@ The turns obey the same law as a real cube. Every turn is an even permutation of
 
 ### How workspace switches work
 
-Switching workspace slides your windows sideways with the theme's flick-and-settle curve. At the same time, the background stack rolls 120 degrees about the cube's corner, in the direction you moved. Three switches make a full turn.
+Switching workspace slides your windows sideways with the theme's flick-and-settle curve (420 ms). The background slides with them, one screen width in the direction you moved, on the same curve, so each workspace sits over its own stretch of the stack.
 
 ### For theme authors
 
@@ -92,18 +94,26 @@ omacube_plastic = "#0b0b0d"
 
 At the top of `Service.qml`:
 
-- `pixelSize` (default 4) sets how many screen pixels each art pixel covers. Set it to 0 for smooth, antialiased rendering at `renderScale`.
+- `renderWidth` (default 6144) sets how many pixels across the background renders before it is scaled to your screen. 0 renders at your screen's own resolution.
+- `pixelSize` (default 0) switches to pixel art when above 0: each art pixel covers that many screen pixels, with hard edges in your theme's exact colours.
 - `fps` (default 24) sets how many times a second the background redraws.
 
 After editing `Service.qml`, run `omarchy restart shell`.
 
 ## Performance
 
-- Pixel art renders about 1/30 of the screen's pixels. On an RTX 4070 SUPER at 3440x1440 it added 2 to 4 W of GPU power, with the GPU staying at idle clocks.
-- Smooth mode (`pixelSize: 0`) added about 9 W on the same machine.
+Measured as whole-GPU power with the background showing, on an RTX 4070 SUPER at 3440x1440:
+
+| Setting | GPU power |
+|---|---|
+| 6K, the default (`renderWidth: 6144`) | about 147 W, GPU at full clock and 76% busy |
+| Your screen's resolution (`renderWidth: 0`) | about 48 W |
+| Pixel art (`pixelSize: 4`) | about 16 W, GPU at idle clocks |
+
+- 6K is heavy. It keeps the GPU at full clock while the desktop is visible, and it leaves less GPU for anything else running on it, such as local AI models or games. `renderWidth: 0` looks nearly the same on most screens at a third of the power.
 - It stops redrawing while a fullscreen window covers the screen.
-- Any animated wallpaper makes the compositor repaint the screen on every frame. On integrated graphics, expect a bigger relative cost; a larger `pixelSize` or a lower `fps` helps.
-- The animation loops seamlessly: the cubes every 70 minutes. The field holds still; it only slides with workspace turns. Nothing jumps when the loop wraps.
+- Any animated wallpaper makes the compositor repaint the screen on every frame. On integrated graphics, use pixel art.
+- The animation loops seamlessly every 70 minutes, and the workspace slide wraps without a jump.
 
 ## How it's checked
 
@@ -112,14 +122,17 @@ After editing `Service.qml`, run `omarchy restart shell`.
 - `python3 tools/check-math.py` re-derives every claim about the background in plain Python, using brute force where the shader takes shortcuts.
 - `lua tools/check-cubeface.lua` checks the tiling. It covers every turn, all 511 window arrangements on three screen sizes, the geometry of a face turn, and the whole group of reachable arrangements.
 - `node tools/check-palette.mjs` runs the plugin's own `Palette.js` against every installed theme.
-- `dev/selfcheck.sh` builds debug versions of the shader and renders them on your GPU. Each check paints failing pixels magenta, then counts them. It needs a running Wayland session with Quickshell.
+- `dev/selfcheck.sh` builds debug versions of the shader and renders them on your GPU. Each check paints failing pixels magenta, then counts them. One compares the fast way of drawing slid-out cubes with marching them directly. It needs a running Wayland session with Quickshell.
 
 ## Development
 
 - `shaders/omacube.frag` is the shader source. `shaders/omacube.frag.qsb` is the compiled form Qt loads. Rebuild it with `tools/build-shader.sh` (needs `qt6-shadertools`).
-- `dev/preview.sh [outdir] [frames] [fps] [t0] [width] [height] [qsb]` renders PNG frames without installing the plugin. Set `OMACUBE_THEME=/path/to/colors.toml` for a theme's colours, and `OMACUBE_PIXEL=1` for pixel art (render at the art-pixel size, then upscale with nearest neighbour).
+- `dev/preview.sh [outdir] [frames] [fps] [t0] [width] [height] [qsb]` renders PNG frames without installing the plugin. Set `OMACUBE_THEME=/path/to/colors.toml` for a theme's colours, `OMACUBE_PIXEL=1` for pixel art (render at the art-pixel size, then upscale with nearest neighbour), and `OMACUBE_PAN=<units>` to move the camera sideways.
+- `tools/build-glyphs.sh` rebuilds `glyphs.png` from the two fonts (needs ImageMagick).
 - `dev/sticker-window.sh <n> [hex]` opens a demo window that looks like a cube sticker, for trying out the tiling.
 
 ## Credits
 
 Built by Tiedeyez. MIT licence. "Omacube" is an independent fan project and is not affiliated with any puzzle-cube trademark holder.
+
+The word glyphs in `glyphs.png` come from two fonts: the Omarchy logo from Omarchy's own `omarchy.ttf`, and O M A R C H Y from the [Omarchy Font](https://tinker.markcuda.com/omarchy-font/) by Mark Cuda (MIT, unofficial), traced from the official wordmark. The Omarchy name and wordmark belong to their owners; Omacube is not affiliated with Omarchy or 37signals.

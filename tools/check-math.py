@@ -16,7 +16,14 @@ brute force rather than the shader's shortcuts:
              nearby cube, never show part of a face (no triangles)
   colours    "undo every move back to solved" gives the same colours as
              physically turning a solved cube, and every state is legal
-  cycle      colours and geometry agree at every slot boundary of a cycle
+  cycle      bursts fit their windows, nothing jumps, cubes move only in
+             their class's window and only fully slid out
+  physics    cubes turning in place collided; free cubes slid out by LIFT
+             clear every neighbour, and neighbours in a layer take turns
+  words      word sites keep faces whole; the glyphs fit each cube and read
+             undistorted; printed fragments come home exactly
+  events     a word solves, holds and re-scrambles with no jump, turning only
+             fully slid out, inside its class's windows
   loop       the clock wrap and the workspace-slide wrap are seamless
   camera     the view is a true, unmirrored isometric projection, and the
              stickers use the standard colour scheme
@@ -39,6 +46,17 @@ CYCLE = 14
 TURN = 0.6
 FILL = 0.74             # the distance test's random scene
 SWITCH = 0.92           # the stack's per-cell switch chance (shader FILL)
+LIFT = 0.63             # how far a free cube slides out along each axis before it turns
+WIN = 4189.5 / 420      # 9.975 s: one class window; classes 0, 1, 2 take turns
+LIFT_S = 0.33           # seconds an ordinary slide out, or back in, takes
+EPOCH = 12 * WIN        # 119.7 s: one chance per word site for a word
+EV_LEAD = 0.1           # seconds into its window a word cube starts
+EV_LIFT = 0.25          # seconds: slide out / back around a speed-solve or re-scramble
+EV_MOVE = 0.4           # seconds per speed-solve move (it turns in the first 60%)
+EV_SOLVE, EV_SCRAMBLE = 0, 6   # windows of the epoch where class 0 solves / re-scrambles
+SITE_ROW, SITE_BLOCK, SITE_LEN, SITE_SLACK = 4, 16, 8, 7
+GLYPH = 3.6             # a glyph cell spans 3.6 x 3.6 world units, centred on the cube
+PAN_CELLS = 3072        # the workspace slide wraps every 3072 cells (a multiple of 3)
 
 failures = []
 
@@ -480,82 +498,552 @@ def previous_colouring_is_illegal(rng):
           bad > 0, f"{bad} of 200 cubes impossible")
 
 
-def world_colours(base, moves3, slot, at_end):
-    """Sticker colours at world positions at the start or end of a slot."""
-    if slot < 3:
-        pre, idx, sign = slot, slot, 1
-    elif slot < 7:
-        pre, idx, sign = 3, None, 0
-    elif slot < 10:
-        idx = 9 - slot
-        pre, sign = idx + 1, -1
-    else:
-        pre, idx, sign = 0, None, 0
-    applied = base + moves3[:pre]
-    out = {}
-    for c in ((i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)):
-        for n in FACES:
-            if dot(c, n) != 1:
-                continue
-            colour = colour_by_undo(c, n, applied)[0]
-            wc, wn = c, n
-            if idx is not None and at_end and in_move(c, moves3[idx]):
-                axis, _, direction = moves3[idx]
-                wc, wn = rot90(c, axis, sign * direction), rot90(n, axis, sign * direction)
-            out[(wc, wn)] = colour
-    return out
+def cube_class(c):
+    """The shader's classOf(): neighbours in a layer always differ, so they take turns."""
+    return (c[0] - c[1]) % 3
 
 
-def test_cycle(rng):
-    breaks = 0
-    for _ in range(1000):
+SPEEDS = (6, 7, 8, 9, 10, 11)
+
+
+def burst_seconds(m):
+    """Slide out, three moves, a rest, the three undone (the last only turns its
+    first 60%), slide back: all inside one window of the cube's class."""
+    sl = float(SLOT) * m / 8
+    return 2 * LIFT_S + (6 + TURN) * sl
+
+
+def smooth(x):
+    return x * x * (3 - 2 * x)
+
+
+def ordinary_state(t, cls, m, offset, base, cycle_moves):
+    """The shader's ordinaryState(): (applied moves, move in progress, lift).
+    Outside a burst every cube rests at its base scramble, so only cubes in a
+    burst need the free test; a burst happens only in a window of its class."""
+    w = math.floor(t / WIN)
+    if (w - cls) % 3:
+        return base, None, 0.0
+    j = (w - cls) // 3                            # which of its class's windows
+    m3 = cycle_moves(j % 140)
+    sl = float(SLOT) * m / 8
+    tau = t - w * WIN - offset(j % 140) * (WIN - burst_seconds(m) - 0.05)
+    if tau < 0 or tau >= burst_seconds(m):
+        return base, None, 0.0
+    if tau < LIFT_S:
+        return base, None, LIFT * smooth(tau / LIFT_S)
+    u = tau - LIFT_S
+    if u < (6 + TURN) * sl:
+        k = min(int(u / sl), 6)
+        f = u - k * sl
+        if k < 3:
+            pre, mv, sgn = k, m3[k], 1
+        elif k == 3:
+            return base + m3, None, LIFT               # rest, still out
+        else:
+            pre, mv, sgn = 7 - k, m3[6 - k], -1
+        return base + m3[:pre], (mv, sgn * mv[2] * ease(f / (TURN * sl)) * math.pi / 2), LIFT
+    v = u - (6 + TURN) * sl
+    return base, None, LIFT * (1 - smooth(min(v / LIFT_S, 1.0)))
+
+
+def test_schedule(rng):
+    jumps = lift_jumps = outside = low = over = 0
+    for _ in range(400):
+        cls, m = rng.randrange(3), rng.choice(SPEEDS)
         base = sequence(rng, rng.randrange(0, 21))
-        moves3, next3 = sequence(rng, 3), sequence(rng, 3)
-        for slot in range(CYCLE):
-            end = world_colours(base, moves3, slot, at_end=True)
-            if slot + 1 < CYCLE:
-                start = world_colours(base, moves3, slot + 1, at_end=False)
-            else:                                  # next cycle, new moves
-                start = world_colours(base, next3, 0, at_end=False)
-            if end != start:
-                breaks += 1
-    check("cycle: colours are continuous across every slot boundary", breaks == 0,
-          f"{breaks} jumps")
-    # the slot clamp: positions a hair outside [0, 14) are folded back in
-    def fold(tt):
-        cyc = math.floor(tt / CYCLE)
-        s = tt - cyc * CYCLE
-        if s < 0:
-            s, cyc = s + CYCLE, cyc - 1
-        if s >= CYCLE:
-            s, cyc = s - CYCLE, cyc + 1
-        return cyc, s
-    ok = all(0 <= fold(tt)[1] < CYCLE for tt in (14 * 5 - 1e-12, 14 * 5, 14 * 5 + 1e-12, 0.0))
-    check("cycle: slot position always lands in [0, 14)", ok)
+        memo_m, memo_o = {}, {}
+        def cycle_moves(k):
+            if k not in memo_m:
+                memo_m[k] = sequence(rng, 3)
+            return memo_m[k]
+        def offset(k):
+            if k not in memo_o:
+                memo_o[k] = rng.random()
+            return memo_o[k]
+        sl = float(SLOT) * m / 8
+        over += burst_seconds(m) > WIN - 0.05
+        state = lambda t: ordinary_state(t % 4189.5, cls, m, offset, base, cycle_moves)
+        w0 = rng.randrange(0, 420 - 6)
+        cuts = [4189.5]                            # the clock wrap
+        for w in range(w0, w0 + 6):
+            cuts.append(w * WIN)
+            if (w - cls) % 3 == 0:
+                j = (w - cls) // 3
+                st = w * WIN + offset(j % 140) * (WIN - burst_seconds(m) - 0.05)
+                cuts += [st, st + LIFT_S] + [st + LIFT_S + k * sl for k in range(7)]
+                cuts += [st + LIFT_S + k * sl + TURN * sl for k in range(7)]
+                cuts += [st + LIFT_S + (6 + TURN) * sl + LIFT_S]
+        for b in cuts:
+            a1, i1, l1 = state(b - 1e-7)
+            a2, i2, l2 = state(b + 1e-7)
+            jumps += pose_gap(pose_of(a1, i1), pose_of(a2, i2)) > 1e-4
+            lift_jumps += abs(l1 - l2) > 1e-4
+        for k in range(3000):
+            t = w0 * WIN + 6 * WIN * k / 3000
+            a, inp, l = state(t)
+            busy = l > 0 or (inp is not None and abs(inp[1]) > 1e-9)
+            outside += busy and math.floor(t / WIN) % 3 != cls
+            if inp is not None and abs(inp[1]) > 1e-9 and abs(inp[1]) < math.pi / 2 - 1e-9:
+                low += l != LIFT
+    check("cycle: every burst fits inside one window, at every speed", over == 0)
+    check("cycle: no cubie ever jumps (window edges, burst edges, the clock wrap)", jumps == 0,
+          f"{jumps} jumps")
+    check("cycle: the slide out and back is continuous", lift_jumps == 0)
+    check("cycle: a cube is out of the pile only inside its own class's window", outside == 0)
+    check("cycle: every turn happens fully slid out", low == 0)
+    check("cycle: neighbours in a layer always differ in class, so they never move together",
+          all(cube_class(o) != 0 for o in ((1, -1, 0), (1, 0, -1), (0, 1, -1), (-1, 1, 0), (-1, 0, 1), (0, -1, 1))))
 
 
 # ---- loop and slide -----------------------------------------------------------
 
 def test_loop():
-    speeds = (6, 7, 8, 9, 10, 12)
-    cube_loop = Fraction(133, 10) * 2520 / 8      # seconds, = 4189.5
-    ok = cube_loop == Fraction(8379, 2)
-    for m in speeds:
-        cycles = cube_loop / (SLOT * m / 8 * CYCLE)
-        ok &= cycles.denominator == 1 and cycles == Fraction(2520, m)
-    check("loop: 4189.5 s is a whole number of cycles at every speed m/8, "
-          "m in {6,7,8,9,10,12}", ok)
-    # the workspace slide wraps every 1024 lattice steps of (3, 3, -6): cell ids shift by
-    # 1024 * (1, 1, -2), which keeps id mod 1024 and the layer sum unchanged
+    check("loop: 4189.5 s is exactly 420 class windows (140 per class, each with new moves)",
+          abs(WIN * 420 - 4189.5) < 1e-9 and 420 % 3 == 0)
+    # the workspace slide wraps every 3072 lattice steps of (3, 0, -3): cell ids shift by
+    # 3072 * (1, 0, -1), which keeps id mod 1024 (so every hash and every word site),
+    # the layer sum, and x - y mod 3 (so every cube's class) unchanged
     rng = random.Random(7)
-    shift = (1024, 1024, -2048)
+    shift = (PAN_CELLS, 0, -PAN_CELLS)
     same = True
     for _ in range(10000):
         cid = tuple(rng.randrange(-5000, 5000) for _ in range(3))
         moved = add(cid, shift)
         same &= tuple(v % 1024 for v in cid) == tuple(v % 1024 for v in moved)
-        same &= sum(cid) == sum(moved)
-    check("loop: the slide wrap maps every cell onto one with the same hash and layer", same)
+        same &= sum(cid) == sum(moved) and cube_class(cid) == cube_class(moved)
+    check("loop: the slide wrap maps every cell onto one with the same hash, layer and class", same)
+    check("loop: the event clock wraps with the cube clock (35 whole epochs, each 12 windows)",
+          abs(EPOCH * 35 - 4189.5) < 1e-9)
+
+
+# ---- physics: only free cubes move, and they slide out before they turn ----------
+#
+# Neighbouring cubes touch, and a turning layer's corners sweep out to
+# 1.5 * sqrt(2) from the axis, so a cube turning in place cuts into the cubes
+# beside it. A cube may move only when it is free: no cube in front of it on
+# any axis (in a down-set that empties every cell further along all three
+# axes). It slides straight out along (1, 1, 1), which is the view direction,
+# so on screen it does not move, until its turning layers clear every
+# neighbour; it turns only while fully out, and settles back between bursts.
+
+E3 = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+CUBIES = [(i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)]
+
+
+def cube_boxes(centre, move=None, ang=0.0):
+    """The 27 cubies as oriented boxes (centre, axes); move = (axis, layer)."""
+    out = []
+    for c in CUBIES:
+        if move and ang and (move[1] == 2 or c[move[0]] == move[1]):
+            p = rot_axis(c, move[0], ang)
+            ax = [rot_axis(e, move[0], ang) for e in E3]
+        else:
+            p, ax = c, E3
+        out.append((add(centre, p), ax))
+    return out
+
+
+def boxes_overlap(a, b, tol=1e-9):
+    """Separating-axis test for two cubies of half size H; touching is allowed."""
+    (ca, aa), (cb, ab) = a, b
+    d = sub(cb, ca)
+    if dot(d, d) > 3.0 + 1e-9:
+        return False
+    axes = list(aa) + list(ab)
+    for u in aa:
+        for v in ab:
+            w = cross(u, v)
+            n = norm(w)
+            if n > 1e-9:
+                axes.append(mul(w, 1 / n))
+    for L in axes:
+        ra = sum(H * abs(dot(u, L)) for u in aa)
+        rb = sum(H * abs(dot(v, L)) for v in ab)
+        if abs(dot(d, L)) >= ra + rb - tol:
+            return False
+    return True
+
+
+def cubes_overlap(a, b):
+    return any(boxes_overlap(x, y) for x in a for y in b)
+
+
+TURNS = [(a, l) for a in range(3) for l in (-1, 0, 1, 2)]
+ANGLES = [math.radians(x) for x in (10, 30, 45, 60, 80, 90)]
+# neighbours a free cube can have: any cell not further along all three axes
+NEIGHBOURS = [o for o in ((i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1))
+              if o != (0, 0, 0) and min(o) < 0]
+
+
+def peak_angle():
+    return max(ease(i / 2000) for i in range(2001)) * math.pi / 2
+
+
+def test_physics(rng):
+    angles = ANGLES + [peak_angle()]
+    out = (LIFT, LIFT, LIFT)
+    old = new = 0
+    for move in TURNS:
+        for ang in angles:
+            for o in NEIGHBOURS:
+                other = cube_boxes(mul(o, P))
+                old += cubes_overlap(cube_boxes((0, 0, 0), move, ang), other)
+                new += cubes_overlap(cube_boxes(out, move, ang), other)
+    check("physics: a cube turning in place cut into its neighbours (expected before the fix)",
+          old > 0, f"{old} colliding move/angle/neighbour cases")
+    check("physics: a free cube slid out by LIFT clears every neighbour, every move, every angle",
+          new == 0, f"{new} collisions, overshoot peak {math.degrees(peak_angle()):.1f} deg")
+    need = 3 / math.sqrt(2) - 1.5
+    check("physics: LIFT is above the least clearing slide 3/sqrt(2) - 1.5",
+          need < LIFT < need + 0.02, f"least {need:.4f}, LIFT {LIFT}")
+    # two free cubes, each anywhere in its own schedule
+    def pose(c):
+        if rng.random() < 0.5:                             # turning: fully out
+            return cube_boxes(add(c, out), rng.choice(TURNS), rng.choice(angles))
+        u = rng.uniform(0, LIFT)                           # sliding: square on
+        return cube_boxes(add(c, (u, u, u)))
+    layer_nb = [(1, -1, 0), (1, 0, -1), (0, 1, -1), (-1, 1, 0), (-1, 0, 1), (0, -1, 1)]
+    others = [o for o in ((i, j, k) for i in range(-1, 2) for j in range(-1, 2) for k in range(-1, 2))
+              if min(o) < 0 < max(o) and o not in layer_nb]
+    bad = sum(cubes_overlap(pose((0, 0, 0)), pose(mul(rng.choice(others), P))) for _ in range(1200))
+    check("physics: free cubes that are not neighbours in a layer never collide, whatever each does",
+          bad == 0, f"{bad} of 1200 random pairs")
+    nb = sum(cubes_overlap(pose((0, 0, 0)), pose(mul(rng.choice(layer_nb), P))) for _ in range(600))
+    check("physics: neighbours in a layer can collide when both move (expected: so they take turns)",
+          nb > 0, f"{nb} of 600 random pairs")
+    # free cubes: three empty cells in front means every cell further along is empty
+    on = make_switch(5, SWITCH)
+    occ = memoize(lambda c: occupied_new(c, on))
+    ok = True
+    for c in ((i, j, k) for i in range(-5, 6) for j in range(-5, 6) for k in range(-5, 6)):
+        if not -3 <= sum(c) <= 0 or not occ(c) or any(occ(add(c, e)) for e in E3):
+            continue
+        ok &= not any(occ(add(c, (a, b, d))) for a in range(4) for b in range(4) for d in range(4)
+                      if (a, b, d) != (0, 0, 0))
+    check("physics: a free cube has nothing anywhere ahead of it, so its slide out is clear", ok)
+    s3, s2, s6 = math.sqrt(3), math.sqrt(2), math.sqrt(6)
+    rt, up = (1 / s2, 0.0, -1 / s2), (-1 / s6, 2 / s6, -1 / s6)
+    check("physics: the slide is along the view axis, so the cube stays put on screen",
+          abs(dot((1, 1, 1), rt)) < 1e-12 and abs(dot((1, 1, 1), up)) < 1e-12)
+    # drawing: a cube slid along (1, 1, 1) is hit by an orthographic ray at
+    # the same point of the cube, only nearer by lift * sqrt(3), so main()
+    # can march every cube in its cell and correct the slid-out ones after
+    fw = (-1 / s3, -1 / s3, -1 / s3)
+    def trace(centre, ro, move, ang):
+        t = 0.0
+        for _ in range(400):
+            q = sub(add(ro, mul(fw, t)), centre)
+            d = cube_sdf(q, move[0], move[1], ang)
+            if d < 1e-7:
+                return t, q
+            t += d
+            if t > 30:
+                return None, None
+        return None, None
+    worst = 0.0
+    same = True
+    for _ in range(300):
+        move, ang = rng.choice(TURNS), rng.choice(angles)
+        u = rng.uniform(0, LIFT)
+        ro = add(add(mul(rt, rng.uniform(-2.6, 2.6)), mul(up, rng.uniform(-2.6, 2.6))), mul(fw, -12))
+        t0, q0 = trace((0, 0, 0), ro, move, ang)
+        t1, q1 = trace((u, u, u), ro, move, ang)
+        if t0 is None or t1 is None:
+            same &= t0 is None and t1 is None
+            continue
+        worst = max(worst, abs((t0 - t1) - u * s3), norm(sub(q0, q1)))
+    check("drawing: a slid-out cube shows the same point, nearer by lift*sqrt(3) (fast drawing is exact)",
+          same and worst < 1e-5, f"worst error {worst:.1e}")
+
+
+class LiftedScene(Scene):
+    """Scene with every cube slid out by its own amount in [0, LIFT]."""
+
+    def __init__(self, rng, span=4):
+        super().__init__(rng, span)
+        self.lift = {c: rng.choice((0.0, LIFT, rng.uniform(0, LIFT))) for c in self.cells}
+
+    def cube(self, cid, p):
+        u = self.lift[cid]
+        return cube_sdf(sub(sub(p, mul(cid, P)), (u, u, u)), *self.cells[cid])
+
+    def fast(self, p):
+        """The shader's mapScene(): cells picked around lattice + LIFT/2, capped."""
+        h = LIFT / 2
+        c0 = tuple(rnd((v - h) / P) for v in p)
+        q0 = tuple(p[k] - c0[k] * P - h for k in range(3))
+        sd = tuple(1 if v >= 0 else -1 for v in q0)
+        best = P + min(abs(v) for v in q0) - h - R
+        for o in ((a, b, c) for a in (0, 1) for b in (0, 1) for c in (0, 1)):
+            cid = (c0[0] + o[0] * sd[0], c0[1] + o[1] * sd[1], c0[2] + o[2] * sd[2])
+            if cid in self.cells:
+                best = min(best, self.cube(cid, p))
+        return best
+
+
+def test_lifted_scene(rng):
+    scene = LiftedScene(rng)
+    bad = total = 0
+    for _ in range(30000):
+        p = tuple(rng.uniform(-6.0, 6.0) for _ in range(3))
+        true = scene.brute(p)
+        if true <= 0:
+            continue
+        total += 1
+        bad += scene.fast(p) > true + 1e-9
+    check("scene: with cubes slid out, the estimate still never overestimates", bad == 0,
+          f"{bad} of {total} samples")
+    check("scene: the far-cell cap stays positive, so the march always advances",
+          P - LIFT / 2 - R > 0, f"minimum cap {P - LIFT / 2 - R:.3f}")
+
+
+# ---- words: cubes that spell the Omarchy lockup ------------------------------------
+
+def site_of(c, site_hash):
+    """The shader's siteLetter(): which letter (0..7) a top-layer cell carries, or None.
+    site_hash(row, block) -> (is_site, offset)."""
+    if sum(c) != 0:
+        return None
+    kx, ky = c[0] % 1024, c[1] % 1024
+    if ky % SITE_ROW:
+        return None
+    block = kx // SITE_BLOCK
+    is_site, off = site_hash(ky, block)
+    k = kx - block * SITE_BLOCK - off
+    return k if is_site and 0 <= k < SITE_LEN else None
+
+
+def occupied_words(c, on, site_hash):
+    """occupied() with word sites: their cells and down-cones are always filled."""
+    s = sum(c)
+    if s > 0:
+        return False
+    if s <= -4:
+        return True
+    for a in range(4):
+        for b in range(4 - a):
+            d = -s - a - b
+            if d >= 0 and site_of(add(c, (a, b, d)), site_hash) is not None:
+                return True
+    return occupied_new(c, on)
+
+
+def read_png_gray(path):
+    """Minimal PNG reader for an 8-bit greyscale, non-interlaced image."""
+    import struct, zlib
+    data = open(path, "rb").read()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    pos, idat, w = 8, b"", 0
+    while pos < len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + n]
+        if kind == b"IHDR":
+            w, h, depth, ctype, _, _, inter = struct.unpack(">IIBBBBB", body)
+            assert depth == 8 and ctype == 0 and inter == 0, "glyphs.png must be 8-bit grey"
+        elif kind == b"IDAT":
+            idat += body
+        pos += 12 + n
+    raw, rows, prev = zlib.decompress(idat), [], bytearray(w)
+    for y in range(h):
+        f, line = raw[y * (w + 1)], bytearray(raw[y * (w + 1) + 1:(y + 1) * (w + 1)])
+        for x in range(w):
+            a = line[x - 1] if x else 0
+            b, c = prev[x], (prev[x - 1] if x else 0)
+            if f == 1: line[x] = (line[x] + a) & 255
+            elif f == 2: line[x] = (line[x] + b) & 255
+            elif f == 3: line[x] = (line[x] + (a + b) // 2) & 255
+            elif f == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                line[x] = (line[x] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        rows.append(line)
+        prev = line
+    return w, h, rows
+
+
+def test_words(rng):
+    import os
+    sites = {}
+    def site_hash(row, block):
+        if (row, block) not in sites:
+            sites[(row, block)] = (rng.random() < 0.75, rng.randrange(SITE_SLACK))
+        return sites[(row, block)]
+    on = make_switch(9, SWITCH)
+    occ = memoize(lambda c: occupied_words(c, on, site_hash))
+    cells = [(i, j, k) for i in range(-40, 40) for j in range(-8, 9) for k in range(-40, 40)
+             if -5 <= i + j + k <= 1]
+    down = all(not occ(c) or all(occ(add(c, e)) for e in ((-1, 0, 0), (0, -1, 0), (0, 0, -1)))
+               for c in cells)
+    check("words: word sites keep the stack a down-set (so faces stay whole)", down)
+    letters = {}
+    for c in cells:
+        k = site_of(c, site_hash)
+        if k is not None:
+            letters.setdefault((c[1], (c[0] % 1024) // SITE_BLOCK), {})[k] = c
+    whole = all(sorted(v) == list(range(SITE_LEN)) for v in letters.values()
+                if all(-40 < c[0] < 39 and -40 < c[2] < 39 for c in v.values()))
+    free = all(occ(c) and not any(occ(add(c, e)) for e in E3) for v in letters.values() for c in v.values())
+    check("words: every site is 8 present, free cubes on the top layer", whole and free and len(letters) > 0,
+          f"{len(letters)} sites")
+    s2, s6 = math.sqrt(2), math.sqrt(6)
+    rt, up = (1 / s2, 0.0, -1 / s2), (-1 / s6, 2 / s6, -1 / s6)
+    step = mul((1, 0, -1), P)
+    check("words: a site's letters run left to right in one level row on screen",
+          dot(step, rt) > 0 and abs(dot(step, up)) < 1e-12 and abs(sum(step)) < 1e-12)
+    # the printed glyphs: inside each cube's outline, with a margin, so a solved
+    # cube carries a whole glyph on its three visible faces
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "glyphs.png")
+    w, h, rows = read_png_gray(path)
+    ok_size = (w, h) == (512 * SITE_LEN, 512)
+    worst = 9.0
+    inked = []
+    for k in range(SITE_LEN):
+        n = 0
+        for y in range(0, 512, 2):
+            for x in range(0, 512, 2):
+                if rows[y][k * 512 + x] < 128:
+                    continue
+                n += 1
+                gx = ((x + 0.5) / 512 - 0.5) * GLYPH
+                gy = (0.5 - (y + 0.5) / 512) * GLYPH
+                worst = min(worst, 1.5 * s2 - abs(gx), 1.5 * math.sqrt(1.5) * 2 - abs(gy) - abs(gx) / math.sqrt(3))
+        inked.append(n)
+    check("words: glyphs.png holds the logo and O M A R C H Y, 512 px cells", ok_size and min(inked) > 500,
+          f"{w}x{h}, ink {inked}")
+    check("words: every glyph stays inside its cube's outline on screen", worst > 0.05,
+          f"closest {worst:.3f} units")
+    # the print is anamorphic: a point on a visible face of a solved cube shows
+    # at its own screen offset, (p.rt, p.up), so the glyph reads undistorted
+    ok = True
+    for _ in range(2000):
+        n = rng.choice(E3)
+        t1, t2 = [e for e in E3 if e != n]
+        hp = add(add(mul(n, 1.5), mul(t1, rng.uniform(-1.5, 1.5))), mul(t2, rng.uniform(-1.5, 1.5)))
+        t = dot(hp, (1, 1, 1)) / 3
+        foot = sub(hp, (t, t, t))                         # where the view ray through hp lands
+        ok &= abs(dot(foot, rt) - dot(hp, rt)) < 1e-12 and abs(dot(foot, up) - dot(hp, up)) < 1e-12
+    check("words: the print maps each face point to its own screen spot (reads undistorted)", ok)
+    # picture-cube stickers: undoing the moves on the hit point, not just the
+    # cubie and normal, brings a printed fragment home, orientation included
+    bad = 0
+    for _ in range(300):
+        moves = sequence(rng, rng.randrange(1, 21))
+        for c0 in CUBIES:
+            for n0 in FACES:
+                if dot(c0, n0) != 1:
+                    continue
+                t0 = add(mul(n0, 0.5), (0.3 * (n0[0] == 0), 0.2 * (n0[1] == 0), -0.1 * (n0[2] == 0)))
+                c, n, t = c0, n0, t0
+                for m in moves:                           # turn physically
+                    if in_move(c, m):
+                        c, n, t = rot90(c, m[0], m[2]), rot90(n, m[0], m[2]), rot90(t, m[0], m[2])
+                for m in reversed(moves):                 # the shader's homeOf()
+                    if in_move(c, m):
+                        c, n, t = rot90(c, m[0], -m[2]), rot90(n, m[0], -m[2]), rot90(t, m[0], -m[2])
+                bad += (c, n) != (c0, n0) or norm(sub(t, t0)) > 1e-12
+    check("words: printed fragments come home exactly, centre orientation included", bad == 0)
+
+
+# ---- events: a site speed-solves, holds the word, and re-scrambles -----------------
+
+def pose_of(applied, inprog):
+    """Every cubie's displayed position and rotation (rows), from home."""
+    out = {}
+    for h in CUBIES:
+        pos, M = h, E3
+        for m in applied:
+            if in_move(pos, m):
+                pos = rot90(pos, m[0], m[2])
+                M = tuple(rot90(r, m[0], m[2]) for r in M)
+        if inprog and in_move(pos, inprog[0]):
+            m, ang = inprog
+            pos = rot_axis(pos, m[0], ang)
+            M = tuple(rot_axis(r, m[0], ang) for r in M)
+        out[h] = (pos, M)
+    return out
+
+
+def pose_gap(a, b):
+    return max(max(norm(sub(a[h][0], b[h][0])), max(norm(sub(x, y)) for x, y in zip(a[h][1], b[h][1])))
+               for h in a)
+
+
+def site_state(t, T0, cls, base, active):
+    """The shader's siteState(): a word cube rests at its base scramble, except
+    in an epoch with a word. Then, in its class's window, it slides out,
+    speed-solves (undoes its scramble), settles; holds the word; and in a
+    later window of its class slides out, re-scrambles and settles."""
+    n = len(base)
+    if not active or not T0 <= t < T0 + EPOCH:
+        return base, None, 0.0
+    S = T0 + (EV_SOLVE + cls) * WIN + EV_LEAD
+    R = T0 + (EV_SCRAMBLE + cls) * WIN + EV_LEAD
+    def burst(u, undo):
+        if u < 0:
+            return (base if undo else []), None, 0.0
+        if u < EV_LIFT:
+            return (base if undo else []), None, LIFT * smooth(u / EV_LIFT)
+        u -= EV_LIFT
+        if u < n * EV_MOVE:
+            j = int(u / EV_MOVE)
+            f = u - j * EV_MOVE
+            if undo:
+                mv = base[n - 1 - j]
+                return base[:n - j], (mv, -mv[2] * ease(f / (EV_MOVE * TURN)) * math.pi / 2), LIFT
+            mv = base[j]
+            return base[:j], (mv, mv[2] * ease(f / (EV_MOVE * TURN)) * math.pi / 2), LIFT
+        u -= n * EV_MOVE
+        return ([] if undo else base), None, LIFT * (1 - smooth(min(u / EV_LIFT, 1.0)))
+    return burst(t - S, True) if t < R else burst(t - R, False)
+
+
+def test_events(rng):
+    longest = EV_LEAD + 2 * EV_LIFT + 20 * EV_MOVE
+    check("events: a solve or re-scramble of up to 20 moves fits in one window",
+          longest < WIN, f"{longest:.2f} s of {WIN:.4f}")
+    check("events: epochs start on a class-0 window, so a word cube's windows are its class's",
+          abs(EPOCH / WIN - 12) < 1e-12 and 12 % 3 == 0)
+    hold = (EV_SCRAMBLE * WIN + EV_LEAD) - (2 * WIN + longest)
+    check("events: the whole word holds still and solved for at least 30 s", hold >= 30.0,
+          f"shortest full-word hold {hold:.2f} s")
+    check("events: every event is over before the next epoch begins",
+          (EV_SCRAMBLE + 2) * WIN + longest < EPOCH)
+    jumps = lift_jumps = low = unsolved = outside = 0
+    for _ in range(400):
+        cls = rng.randrange(3)
+        base = sequence(rng, rng.randrange(0, 21))
+        n = len(base)
+        T0 = EPOCH * rng.randrange(35)
+        state = lambda t: site_state(t, T0, cls, base, True)
+        S = T0 + (EV_SOLVE + cls) * WIN + EV_LEAD
+        R = T0 + (EV_SCRAMBLE + cls) * WIN + EV_LEAD
+        cuts = [T0, T0 + EPOCH]
+        for st in (S, R):
+            cuts += [st, st + EV_LIFT, st + EV_LIFT + n * EV_MOVE, st + 2 * EV_LIFT + n * EV_MOVE]
+            cuts += [st + EV_LIFT + j * EV_MOVE for j in range(n)]
+            cuts += [st + EV_LIFT + j * EV_MOVE + TURN * EV_MOVE for j in range(n)]
+        for b in cuts:
+            a1, i1, l1 = state(b - 1e-7)
+            a2, i2, l2 = state(b + 1e-7)
+            jumps += pose_gap(pose_of(a1, i1), pose_of(a2, i2)) > 1e-4
+            lift_jumps += abs(l1 - l2) > 1e-4
+        for k in range(2000):
+            t = T0 + EPOCH * k / 2000
+            a, inp, l = state(t)
+            busy = l > 0 or (inp is not None and abs(inp[1]) > 1e-9)
+            outside += busy and math.floor(round(t / WIN, 9)) % 3 != cls
+            if inp is not None and 1e-9 < abs(inp[1]) < math.pi / 2 - 1e-9:
+                low += l != LIFT
+        for k in range(60):
+            t = T0 + 3 * WIN + (EV_SCRAMBLE - 3) * WIN * k / 60
+            a, inp, l = state(t)
+            unsolved += bool(a) or inp is not None or l != 0
+    check("events: no cubie ever jumps, entering, inside, or leaving an event", jumps == 0,
+          f"{jumps} jumps")
+    check("events: the slide out and back is continuous throughout", lift_jumps == 0)
+    check("events: a word cube is out of the pile only inside its own class's window", outside == 0)
+    check("events: every speed-solve and re-scramble turn happens fully slid out", low == 0)
+    check("events: during the hold every word cube is exactly solved, at rest in the pile", unsolved == 0)
 
 
 # ---- camera, colour scheme, easing, antialiasing ----------------------------------
@@ -587,15 +1075,10 @@ def test_camera():
     agree = all(norm(sub(rot90(v, a, d), rot_axis(v, a, d * math.pi / 2))) < 1e-12
                 for v in ((1, 0, 0), (0, 1, 0), (0, 0, 1), (1, -1, 1)) for a in range(3) for d in (1, -1))
     check("rotation: exact quarter turns match the continuous rotation", agree)
-    # a 120 degree roll about the view axis maps each lattice axis onto another
-    def rodrigues(v, k, t):
-        return add(add(mul(v, math.cos(t)), mul(cross(k, v), math.sin(t))),
-                   mul(k, dot(k, v) * (1 - math.cos(t))))
-    axes = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
-    images = [rodrigues(a, fw, 2 * math.pi / 3) for a in axes]
-    hits = [[i for i, b in enumerate(axes) if norm(sub(img, b)) < 1e-12] for img in images]
-    check("camera: a 120 degree roll maps the lattice onto itself",
-          all(len(h) == 1 for h in hits) and len({h[0] for h in hits}) == 3)
+    # the workspace slide moves the camera along rt only: straight sideways on
+    # screen, and at a constant height above the stack (rt has coordinate sum 0)
+    check("camera: the workspace slide is purely horizontal and keeps the camera's height",
+          abs(dot(rt, (1, 1, 1))) < 1e-12 and abs(dot(rt, up)) < 1e-12 and abs(dot(rt, fw)) < 1e-12)
 
 
 def ease(x):
@@ -635,7 +1118,11 @@ def main():
     test_stack()
     test_colours(rng)
     previous_colouring_is_illegal(rng)
-    test_cycle(rng)
+    test_schedule(rng)
+    test_physics(rng)
+    test_lifted_scene(rng)
+    test_words(rng)
+    test_events(rng)
     test_loop()
     test_camera()
     test_easing()

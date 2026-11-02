@@ -10,24 +10,29 @@ import "Palette.js" as Palette
 // Omacube: an animated desktop background of an endless isometric stack of
 // 3x3 puzzle cubes that turn their layers and tumble, drawn flat by one
 // fragment shader (shaders/omacube.frag) on a layer-shell surface per screen.
-// Every workspace switch rolls the whole stack 120 degrees, the isometric
-// view's own symmetry, so the pattern clicks back into line like a cube turn.
-// The cubes take their colours from the active Omarchy theme.
+// Every workspace switch slides the stack sideways one screen width, with the
+// windows. Free cubes slide out of the pile to turn, so no layer ever passes
+// through another, and now and then a row of picture cubes speed-solves to
+// spell the Omarchy lockup. The cubes take their colours from the active
+// Omarchy theme.
 //
-// It reads two small files, the active theme's colors.toml and theme.name;
-// writes nothing, runs no processes and touches no network (DISCLOSURE.md).
+// It reads two small files, the active theme's colors.toml and theme.name,
+// plus its own glyphs.png; writes nothing, runs no processes and touches no
+// network (DISCLOSURE.md).
 // It sits on the "bottom" layer (above the stock wallpaper, below windows)
 // with an empty input region, so clicks fall through to the desktop.
 Item {
   id: root
 
   // ---- tuning ------------------------------------------------------------
-  // Pixel art: each art pixel is this many screen pixels, drawn with hard
-  // edges in the theme's exact colours. 0 = smooth, antialiased rendering at
-  // renderScale. Pixel art is also far cheaper: about 1/30 of the pixels.
-  readonly property int pixelSize: 4
-  // Smooth mode only: fraction of screen resolution the shader renders at.
-  readonly property real renderScale: 0.75
+  // Smooth mode (pixelSize 0): the shader renders this many pixels across,
+  // then the result is scaled to the screen with mipmapped filtering. 6144
+  // (6K) supersamples a 3440-wide screen about 1.8x. 0 = screen resolution.
+  readonly property int renderWidth: 6144
+  // Pixel art instead: each art pixel is this many screen pixels, drawn with
+  // hard edges in the theme's exact colours. Far cheaper: about 1/16 of the
+  // pixels at 4.
+  readonly property int pixelSize: 0
   // Redraws per second. The shader only redraws when the clock ticks.
   readonly property int fps: 24
 
@@ -65,25 +70,25 @@ Item {
   }
 
   // ---- one seamless loop ---------------------------------------------------
-  // Every cube's cycle lasts 13.3 s * m / 8 for some m in {6,7,8,9,10,12},
-  // and 4189.5 s (about 70 min) is a whole number of cycles for every m, so
-  // the shader's clock wraps there with nothing changing on screen. The field
-  // itself holds still; only workspace turns slide it. A short loop keeps the
-  // 32-bit time in the shader precise.
+  // 4189.5 s (about 70 min) is exactly 840 class windows and 70 word epochs,
+  // so the shader's clock wraps there with nothing changing on screen. A
+  // short loop keeps the 32-bit time in the shader precise.
   readonly property real cubeLoop: 4189.5
   property real clock: 0
 
-  // Net workspace steps; turnPos eases towards it. One step rolls the view
-  // 120 degrees (the isometric view's own symmetry) and slides the field
-  // half a lattice step. Both wrap with no visible jump: the roll every
-  // 3 steps (360 degrees), the slide every 1024 lattice steps.
+  // Net workspace steps; turnPos eases towards it. One step slides the field
+  // one screen width sideways, with the windows, on the Omacube theme's own
+  // workspace curve (cubeClick, 420 ms). The slide wraps every 3072 lattice
+  // steps, which maps every cell onto one with the same hash and class, so
+  // the wrap shows no jump.
   property int turns: 0
   property real turnPos: turns
-  Behavior on turnPos { NumberAnimation { duration: 1100; easing.type: Easing.OutBack; easing.overshoot: 1.6 } }
+  Behavior on turnPos {
+    NumberAnimation { duration: 420; easing.type: Easing.BezierSpline; easing.bezierCurve: [0.22, 1.35, 0.36, 1, 1, 1] }
+  }
+  readonly property real panPeriod: 3072 * 3 * Math.SQRT2
 
   function wrap(x, m) { return ((x % m) + m) % m }
-  readonly property real spin: 2.0943951024 * wrap(turnPos, 3)
-  readonly property real drift: wrap(0.5 * turnPos, 1024)
 
   readonly property bool anyVisible: {
     var ws = screenWindows.instances
@@ -154,24 +159,33 @@ Item {
         // rounded-up value (2) that rendering does not use
         readonly property real dpr: panel.devicePixelRatio || 1
         readonly property bool pixelArt: root.pixelSize > 0
-        readonly property int texW: pixelArt ? Math.max(2, Math.ceil(panel.width * dpr / root.pixelSize))
-                                             : Math.max(2, Math.round(panel.width * root.renderScale))
+        readonly property real screenW: Math.max(1, panel.width * dpr)
+        readonly property int texW: pixelArt ? Math.max(2, Math.ceil(screenW / root.pixelSize))
+                                             : Math.max(2, root.renderWidth > 0 ? root.renderWidth : Math.round(screenW))
         readonly property int texH: pixelArt ? Math.max(2, Math.ceil(panel.height * dpr / root.pixelSize))
-                                             : Math.max(2, Math.round(panel.height * root.renderScale))
+                                             : Math.max(2, Math.round(texW * panel.height / Math.max(1, panel.width)))
         width: pixelArt ? texW * root.pixelSize / dpr : panel.width
         height: pixelArt ? texH * root.pixelSize / dpr : panel.height
         anchors.centerIn: parent
         layer.enabled: true
         layer.smooth: !pixelArt                 // nearest-neighbour upscale for pixel art
+        layer.mipmap: !pixelArt && texW > screenW   // clean downscale of a supersampled render
         layer.textureSize: Qt.size(texW, texH)
 
         ShaderEffect {
           anchors.fill: parent
           fragmentShader: Qt.resolvedUrl("shaders/omacube.frag.qsb")
           property real time: root.clock % root.cubeLoop
-          property real drift: root.drift
-          property real spin: root.spin
+          // one screen width (2 * VIEW * aspect world units) per workspace
+          property real pan: root.wrap(root.turnPos * 30 * aspect, root.panPeriod)
           property real aspect: width / Math.max(1, height)
+          property var glyphs: glyphAtlas
+          Image {
+            id: glyphAtlas
+            source: Qt.resolvedUrl("glyphs.png")
+            visible: false
+            smooth: true
+          }
           property real texel: 1 / canvas.texH
           property real pixelArt: canvas.pixelArt ? 1 : 0
           property color c0: root.palette.stickers[0]

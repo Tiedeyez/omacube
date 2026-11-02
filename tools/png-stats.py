@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Count self-check colours in PNG frames (standard library only).
 
-  tools/png-stats.py frame.png [...]
+  tools/png-stats.py [--allow FRACTION] frame.png [...]
   tools/png-stats.py --diff a.png b.png     mean |a - b| and % of pixels that changed
+
+--allow passes a frame with at most that fraction of magenta pixels (self-check
+8 uses 1e-5: a pixel or two on silhouettes where the two ways of drawing
+sample a depth edge differently; a missed cube would show across its stickers).
 
 Prints, per file: pixels, magenta (a failed check), pure blue (a ray that
 left the stack), and the brightest grey level (the most march steps, for
@@ -79,7 +83,11 @@ def main():
         diff(sys.argv[2], sys.argv[3])
         return 0
     total_bad = 0
-    for path in sys.argv[1:]:
+    args = sys.argv[1:]
+    allow = 0.0
+    if len(args) >= 2 and args[0] == "--allow":
+        allow, args = float(args[1]), args[2:]
+    for path in args:
         w, h, bpp, rows = read_png(path)
         magenta = blue = grey_max = 0
         grey_sum = grey_n = 0
@@ -94,7 +102,7 @@ def main():
                     grey_max = max(grey_max, r)
                     grey_sum += r
                     grey_n += 1
-        total_bad += magenta
+        total_bad += magenta if magenta > allow * w * h else 0
         mean = grey_sum / grey_n if grey_n else 0.0
         print(f"{path}: {w * h} px, magenta {magenta}, blue {blue}, "
               f"max grey {grey_max}, mean grey {mean:.1f}")

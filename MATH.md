@@ -12,7 +12,7 @@ The view is orthographic and looks straight down the cube diagonal, so the view 
 - These three vectors are orthonormal, and `rt × up = -fw` (it points at the viewer), so the picture is not mirrored.
 - The three cube axes project to equal lengths, 120° apart: a true isometric projection.
 - `+y` points straight up the screen, so a resting cube shows white on top.
-- Rolling the view by 120° about `fw` turns each lattice axis into another one, so a 120° roll lands the pattern back in line. Every workspace switch rolls by exactly that much.
+- A workspace switch slides the camera along `rt` by one screen width (`2·VIEW·aspect` world units), with the windows. `rt` is perpendicular to `fw` and to `up`, so the slide is purely sideways on screen, and its coordinate sum is 0, so the camera stays the same height above the stack.
 
 ## 2. One cube
 
@@ -58,7 +58,7 @@ With the cap, the estimate never exceeds the true distance. Sphere tracing moves
 - In `check-math.py`, the old estimate was too large at about 0.8% of sample points, by up to 0.74 units. The new one is never too large, and is exact at 78% of points.
 - On the GPU (self-check 1), the new shader compares its estimate with a brute-force 27-cell distance at every step of every ray: 0 failing pixels. The same check on the old scheme flags 6,000–20,000 pixels per frame.
 
-Rays start just above the stack. No cube point reaches above coordinate sum `R·√3 = 4.5`, and rays start at 4.6.
+Rays start just above the stack. With every cube in its cell, no cube point reaches above coordinate sum `R·√3 = 4.5`, and rays start at 4.6. Cubes slid out of the pile (see "Physics") are not part of this march; "Drawing it" explains how they are added.
 
 A ray that runs alongside a face tumbled almost edge-on to the view moves in tiny steps. Typical rays hit in about 14 steps; the worst seen took about 220, so the budget is 256. If a ray still runs out within one pixel of a surface, it counts as a hit, since it's a silhouette pixel. Self-check 3 renders the step counts and finds no ray that runs out.
 
@@ -83,28 +83,34 @@ The colour scheme is the standard one: white opposite yellow, red opposite orang
 
 ## 6. Turning on time
 
-Each cube runs a 14-slot cycle: three moves, four slots of rest, the same three moves undone, four more slots of rest.
+Time is cut into windows of 9.975 s, and the three classes of cube (see "Physics") take them in turn: 0, 1, 2, 0, 1, 2, and so on. Once in each window of its class, at a random moment, a free cube makes a burst:
+
+1. It slides out of the pile (0.33 s).
+2. It makes three moves, one per move slot.
+3. It rests for one slot, still out.
+4. It undoes the three moves, newest first.
+5. It slides back in (0.33 s).
+
+A move slot lasts 0.95 s × m / 8 for a speed m in {6, …, 11} that each cube keeps, so the longest burst is 9.73 s and fits its window. Every burst brings three new moves. Outside a burst every cube rests at its base scramble.
 
 - **Turn timing.** A move fills the first 60% of its slot. It follows a curve that starts at 0, overshoots about 10% (a ~99° flick) and settles at exactly 90°. Every slot ends with the cube at rest on the grid, so the step from one slot to the next changes nothing on screen.
-- **Continuity.** `check-math.py` checks all 14 slot boundaries over 1,000 random cubes, including the step into the next cycle's moves: the colours never jump.
-- **Shared moves.** The shape and the colours get their moves from the same function. Self-check 2 confirms on the GPU that the move being animated is always the move the colours will undo: 0 failing pixels.
-- **Rounding.** The slot position is computed with a division, which can round a hair outside `[0, 14)`. The shader folds it back in.
+- **Continuity.** `check-math.py` follows every cubie's position and orientation across every window edge, burst edge, slot edge and the clock wrap, for 400 random cubes: nothing ever jumps, and the slide out and back is continuous.
+- **Shared moves.** The shape and the colours get their moves from the same function. Self-check 2 confirms on the GPU that the move being animated is always the move the colours will undo or apply: 0 failing pixels.
 
 ## 7. Loops with no seam
 
 The shader works in 32-bit floats, so its clock has to wrap. The loop is arranged so that wrapping changes nothing on screen.
 
-- **The cube loop: 4189.5 s (about 70 minutes).** Each cube runs at a speed of m/8 with m in {6, 7, 8, 9, 10, 12}, so its cycle lasts 13.3 s × m / 8. Since lcm(6, 7, 8, 9, 10, 12) = 2520, the loop of 13.3 s × 2520 / 8 = 4189.5 s is a whole number of cycles at every speed. Each cube's moves depend on its cycle number modulo that count, so they also repeat exactly.
-- **The field holds still.** The camera moves only with workspace turns: half a lattice step along (3, 3, −6) per turn. That vector lies in the plane of the stack's top, so the camera stays the same height above the stack. Every cell's random choices come from its id modulo 1024 on each axis, so a 1024-step slide shifts every cell id by 1024 × (1, 1, −2): the same values modulo 1024, and the same layer.
-- **Workspace turns** wrap with no jump. The roll wraps every 3 turns (360°), and the slide every 1024 lattice steps.
+- **The cube loop: 4189.5 s (about 70 minutes).** That is exactly 420 class windows (140 per class) and 35 word epochs of 12 windows. A cube's moves and burst moment depend on its window number modulo 140, and a site's word on its epoch modulo 35, so everything repeats exactly.
+- **The field holds still.** The camera moves only with workspace switches, along `rt`, which is the lattice direction (3, 0, −3). Every cell's random choices come from its id modulo 1024 on each axis, and its class from `x − y` modulo 3. A slide of 3072 lattice steps shifts every cell id by 3072 × (1, 0, −1): the same values modulo 1024, the same layer and the same class. So the slide wraps there, every 3072 · 3√2 ≈ 13,033 units, with no jump.
 
-`check-math.py` verifies both loop lengths with exact fractions. Self-check 5 renders the picture at 0.5 s, then again one cube loop later and one 1024-step slide later, and compares them:
+`check-math.py` verifies the loop and the slide wrap exactly. Self-check 5 renders the picture at 2.37 s, then again one cube loop later and one slide wrap later, and compares them:
 
-| Compared with the frame at 0.5 s | Pixels that differ |
+| Compared with the frame at 2.37 s | Pixels that differ |
 |---|---|
-| One cube loop later | 0.011% |
-| One 1024-step slide later | 0.005% |
-| An ordinary frame 1/24 s later | 6.7% |
+| One cube loop later | 0.000% |
+| One slide wrap later | 0.008% |
+| An ordinary frame 1/24 s later | 1.3% |
 
 The tiny remainder is float rounding, far below normal motion. Keeping the cube loop short keeps the shader's time precise to about half a millisecond.
 
@@ -140,15 +146,17 @@ So opposite faces stay opposite, and every cube remains a legal state in any pal
 
 `node tools/check-palette.mjs` runs the plugin's own `Palette.js` against every installed theme. It also checks odd input (empty, garbage, oversized, CRLF), 2,000 random palettes, and that the Omacube theme gives exactly the classic cube.
 
-## 12. Pixel art
+## 12. Resolution and pixel art
 
-By default the background is drawn as pixel art. Each art pixel covers exactly `pixelSize` screen pixels (4 by default), with no blending, so the image uses only the theme's exact colours.
+By default the background renders smooth at 6144 pixels across (6K) and is scaled to the screen with mipmapped filtering: on a 3440x1440 screen that is about 1.8x supersampling, for clean silhouettes on top of the per-pixel sticker antialiasing. `renderWidth` sets the width; 0 renders at the screen's own resolution.
+
+With `pixelSize` above 0 it is drawn as pixel art instead. Each art pixel covers exactly `pixelSize` screen pixels, with no blending, so the image uses only the theme's exact colours.
 
 - **Exact size.** The shader renders into a texture of `ceil(screen size / pixelSize)` art pixels, which is shown with nearest-neighbour scaling. The canvas is sized in whole art pixels and centred, so it can overhang the screen edge by less than one art pixel. The screen size comes from the window's own scale factor (1.25 on a 3440x1440 screen at 125%). The screen object reports a rounded-up 2 instead, which rendering doesn't use.
 - **Hard edges.** A pixel is either all sticker or all plastic: `step(sd, 0)` instead of the smooth one-pixel ramp.
-- **Whole-pixel scrolling.** As the camera slides on a workspace turn, its offset in the screen plane is rounded to whole art pixels: `pan = rt·round(pan·rt / px)·px + up·round(pan·up / px)·px`. The drift direction lies in the screen plane (it's perpendicular to the view direction), so this moves the picture by exact pixel steps and edges never shimmer.
+- **Whole-pixel sliding.** As the camera slides on a workspace switch, its offset along `rt` is rounded to whole art pixels, so the picture moves by exact pixel steps and edges never shimmer.
 
-Pixel art renders about 1/30 of the screen's pixels. On an RTX 4070 SUPER at 3440x1440, it added 2–4 W of GPU power, against about 9 W for the smooth mode.
+Measured on an RTX 4070 SUPER at 3440x1440, whole-GPU power with the background showing: 6K smooth about 147 W (the GPU at full clock, 76% busy), native smooth about 48 W, pixel art at 4 about 16 W. The original shader, with no physics or words, drew about 38 W at native smooth.
 
 ## 13. Cube-face tiling
 
@@ -180,3 +188,46 @@ The Omacube theme tiles windows with a Hyprland Lua layout, `theme/omacube/cubef
 - a search of every reachable arrangement finds exactly the 181,440 even ones (half of 9!), so the turns generate the whole alternating group A₉, and the single swap is never reached
 
 Hyprland names Lua layouts `lua:<name>` and registers each name only once per session. Omarchy re-runs a theme's Lua on every config reload, so the theme registers small wrappers once and points them at the newest copy of the module on each reload. Window places survive a reload.
+
+## 14. Physics
+
+Neighbouring cubes touch, and a turning layer's corners sweep out to 1.5·√2 ≈ 2.12 from its axis. So a cube that turns in place cuts into the cubes around it. `check-math.py` measures that on the previous version with an exact box-against-box test of every cubie: 144 colliding move, angle and neighbour cases.
+
+Three rules make every motion collision-free.
+
+- **Only free cubes move.** A cube is free when the three cells in front of it (+x, +y, +z) are empty. The stack is a down-set, so then every cell further along all three axes is empty too, and the cube has a clear path out. Top-layer cubes are always free. About 18% of visible cubes are free with the default fill; the rest stay put.
+- **A free cube slides out before it turns.** It slides along (1,1,1) by `LIFT = 0.63` on each axis, turns only while fully out, and slides back between bursts. The least slide that clears every neighbour, for every move and every angle up to the 99° overshoot, is 3/√2 − 1.5 ≈ 0.6213 (`check-math.py` bisects it from the box test). (1,1,1) is the view direction, so the slide doesn't move the cube on screen.
+- **Neighbours take turns.** Two free cubes side by side in one layer can still hit each other when both move (36 of 600 random pairs in the test). A cell's class is `(x − y) mod 3`. The six neighbours in a layer differ by (1,−1,0), (1,0,−1), (0,1,−1) and their negatives, which change `x − y` by ±1 or ±2, so a neighbour never shares a class. A cube moves only in its class's windows. Free cubes that aren't neighbours in a layer never collide, whatever each is doing (0 of 1,200 random pairs).
+
+## 15. Drawing it
+
+Sliding a cube along the view direction changes nothing about which point of it a ray hits; it only makes that point nearer, by `lift·√3`. `check-math.py` confirms it by tracing 300 random rays at turned cubes, slid and not: the same point every time, nearer by exactly `lift·√3` (error 2e-9).
+
+So the shader doesn't march slid-out cubes at all. It marches the stack with every cube in its cell, turning layers included, using the fast distance bound of section 4. Then it checks the few cubes that can be out right now and cover the pixel. Each candidate:
+
+1. lies in one of the cell columns `(i, j, 0) + n(1, 1, 1)` whose screen point is within R of the pixel;
+2. is in the band where cubes move;
+3. is of the class whose window it is;
+4. is in a burst (only then is the free test run).
+
+Each one is traced on its own. The nearest surface, march or candidate, after taking off `lift·√3`, is what the pixel shows.
+
+Marching the slid-out stack directly would need a much smaller bound (`3 + min|q| − LIFT/2 − R`, as small as 0.087 against 0.402), and on the GPU it cost about 108 W against 48 W at native resolution. Self-check 8 keeps that direct march as a reference and compares the two on every sticker pixel: they agree, except for at most a pixel per frame on silhouettes where the two sample a depth edge differently. Self-check 3 shows the march back at about 13.5 steps per ray (the original averaged 13.9).
+
+## 16. Words
+
+Some rows of the top layer are picture cubes. Together they spell the Omarchy lockup: the Omarchy logo (U+E900 from Omarchy's own font), then O M A R C H Y (the Omarchy Font by Mark Cuda, traced from the official wordmark). `tools/build-glyphs.sh` renders the eight glyphs into `glyphs.png`.
+
+- **Sites.** A site is eight cells in a row of the top layer, along (1, 0, −1): straight left to right on screen. Sites sit in every fourth row, at most one per 16-cell block (75% of blocks), at a random offset that leaves at least two cells between sites. Site cells and everything in their down-cones are always present. A union of down-sets is a down-set, so faces stay whole (`check-math.py` checks it).
+- **The print.** Each glyph is printed across the three faces a solved cube turns to the viewer. A point `p` on those faces carries the ink at `(p·rt, p·up)`, its own screen offset from the cube's centre, so the solved cube shows the glyph undistorted from here. A glyph cell is 3.6 × 3.6 units, and every glyph stays at least 0.5 units inside the cube's outline. The ink is the plastic colour.
+- **Picture stickers.** A sticker's colour and its print both come from undoing the moves back to the solved cube. The hit point is undone along with the cubie and the face, so a printed fragment keeps its orientation, centres included (`check-math.py` checks 300 random scrambles).
+
+## 17. Word events
+
+Time is also cut into epochs of 12 windows (119.7 s). In each epoch a site spells its word with chance 0.7. Word cubes rest at their base scramble the rest of the time.
+
+- **Solve.** In the epoch's first window of its class (windows 0, 1, 2 by class), each word cube slides out, undoes its whole scramble at 0.4 s a move, and settles. Up to 20 moves take 8.6 s, inside the 9.975 s window.
+- **Hold.** From the end of window 2 the whole word stands solved and still, for at least 31 s.
+- **Scramble again.** In windows 6, 7 and 8 the cubes slide out, redo their scrambles and settle. The event ends well before the next epoch.
+
+Neighbouring letters are in different classes, so they solve one after another, and no two neighbours ever move at once. `check-math.py` follows every cubie across every boundary of 400 random events: nothing jumps, every turn happens fully slid out, a word cube is out only in its class's window, and during the hold every word cube is exactly solved. Self-check 7 confirms on the GPU that a word cube with nothing applied is exactly solved, so its print lines up.
