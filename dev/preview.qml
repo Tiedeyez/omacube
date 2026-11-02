@@ -57,8 +57,6 @@ ShellRoot {
             property real time: root.wrap(clock, 4189.5) + root.timeOffset
             property real pan: root.wrap(root.turns * 30 * aspect, 3072 * 3 * Math.SQRT2) + root.panOffset
             property real aspect: width / height
-            property var glyphs: glyphAtlas
-            Image { id: glyphAtlas; source: Qt.resolvedUrl("glyphs.png"); visible: false; smooth: true; asynchronous: false }
             property real texel: 1 / root.h
             // OMACUBE_PIXEL=1: hard pixel edges (render at art-pixel size and
             // upscale with nearest neighbour afterwards)

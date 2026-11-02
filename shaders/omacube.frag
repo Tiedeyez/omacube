@@ -13,11 +13,9 @@
 // moved, so they take turns: each cube belongs to one of three classes and
 // moves only inside its class's window.
 //
-// Some rows of top-layer cubes are picture cubes printed with the Omarchy
-// logo and O M A R C H Y. Now and then a row speed-solves, holds the word,
-// and scrambles again. A sticker's colour, and its print, are found by
-// undoing every move back to the solved cube, so they travel with the
-// turning layers. MATH.md explains each step and how it is tested.
+// A sticker's colour is found by undoing every move back to the solved cube,
+// so colours travel with the turning layers. MATH.md explains each step and
+// how it is tested.
 //
 // Qt may run this as GLSL ES 1.00, so it uses no bitwise operators and
 // never indexes a vector with a variable.
@@ -42,8 +40,6 @@ layout(std140, binding = 0) uniform buf {
     vec4 bodyColor; // plastic: the lines between stickers, the inner faces, the print
     vec4 bgColor;   // anything a ray misses
 };
-// The Omarchy lockup, one 512 px cell per glyph: logo, O, M, A, R, C, H, Y.
-layout(binding = 1) uniform sampler2D glyphs;
 
 const float HALF_PI = 1.5707963;
 const float P = 3.0;          // lattice pitch: neighbouring cubes touch
@@ -64,19 +60,6 @@ const float LIFT = 0.63;      // > 3 / sqrt(2) - 1.5 = 0.6213, the least that cl
 const float WIN = 9.975;      // seconds per class window; 420 of them make the loop
 const float LIFT_S = 0.33;    // seconds an ordinary slide out, or back in, takes
 
-// Words (MATH.md, "Words"): where the lockup is printed and when it is spelled.
-const float SITE_ROW = 4.0;   // every 4th row of the top layer can hold sites
-const float SITE_BLOCK = 16.0;// one possible site per 16 cells of such a row
-const float SITE_LEN = 8.0;   // logo + O M A R C H Y
-const float SITE_P = 0.75;    // chance a block holds a site
-const float EPOCH = 119.7;    // 12 windows: one chance per site for a word
-const float EVENT_P = 0.7;    // chance a site spells its word in an epoch
-const float EV_LEAD = 0.1;    // seconds into its window a word cube starts
-const float EV_LIFT = 0.25;   // seconds: slide out / back around a solve
-const float EV_MOVE = 0.4;    // seconds per solve move: a quick, legible solve
-const float EV_SOLVE = 0.0;   // window of the epoch where class 0 solves
-const float EV_SCRAMBLE = 6.0;// and where it scrambles again
-const float GLYPH = 3.6;      // a glyph cell spans 3.6 x 3.6 world units
 
 // ---- arithmetic helpers ------------------------------------------------------
 
@@ -120,7 +103,7 @@ float hash13(vec3 p) {
     return fract((p.x + p.y) * p.z);
 }
 
-// ---- cells, word sites and the stack -------------------------------------------
+// ---- cells and the stack -------------------------------------------------------
 
 // Cell id modulo 1024 on each axis. Multiplying by 1/1024 is exact.
 vec3 cellKey(vec3 id) { return id - PERIOD * floor(id * (1.0 / PERIOD)); }
@@ -129,20 +112,6 @@ vec3 cellKey(vec3 id) { return id - PERIOD * floor(id * (1.0 / PERIOD)); }
 // from it by (1,-1,0), (1,0,-1), (0,1,-1) and their negatives, which change
 // x - y by 2, 1 or -1: never a multiple of 3, so neighbours never share one.
 float classOf(vec3 id) { return imod(id.x - id.y, 3.0); }
-
-// The letter a top-layer cell carries, 0 (logo) to 7 (Y), or -1. Sites sit in
-// every 4th row of the top layer, at most one per 16-cell block, 8 cells long,
-// at a random offset that leaves at least two cells between sites.
-float siteLetter(vec3 id) {
-    if (abs(id.x + id.y + id.z) > 0.5) return -1.0;
-    vec3 key = cellKey(id);
-    if (imod(key.y, SITE_ROW) > 0.5) return -1.0;
-    float block = floor(key.x * (1.0 / SITE_BLOCK));
-    if (hash13(vec3(block, key.y, 3001.0)) >= SITE_P) return -1.0;
-    float off = min(floor(hash13(vec3(block, key.y, 3002.0)) * 7.0), 6.0);
-    float k = key.x - block * SITE_BLOCK - off;
-    return (k > -0.5 && k < SITE_LEN - 0.5) ? k : -1.0;
-}
 
 // The stack is a down-set: whenever a cell holds a cube, so do the cells
 // behind it along -x, -y and -z. Seen down the diagonal, the surface of a
@@ -157,8 +126,6 @@ float siteLetter(vec3 id) {
 // cube only if every cell of its down-cone inside those layers is on: the
 // cells id - (a, b, c) with a, b, c >= 0. That cone rule is what makes it a
 // down-set, and missing cells leave the stair-stepped hexagonal stars.
-// Word sites are always present, and so is everything in their down-cones;
-// a union of down-sets is a down-set, so faces stay whole.
 bool occupied(vec3 id) {
     float s = id.x + id.y + id.z;
     if (s > 0.5) return false;
@@ -166,14 +133,6 @@ bool occupied(vec3 id) {
 #if defined(OMACUBE_OLD_FILL)
     return hash13(cellKey(id)) < 0.74;  // the previous rule, to demonstrate its bug
 #endif
-    // is a site cell id + (a, b, c) with a + b + c = -s? Sites sit only in
-    // rows where y is a multiple of 4, so b is fixed.
-    float b = imod(-cellKey(id).y, SITE_ROW);
-    for (int a = 0; a < 4; a++) {
-        float c = -s - float(a) - b;
-        if (c < -0.5) break;
-        if (siteLetter(id + vec3(float(a), b, c)) > -0.5) return true;
-    }
     float room = s + 3.0;               // 0..3: cone depth left inside the band
     for (int a = 0; a < 4; a++) {
         if (float(a) > room + 0.5) break;
@@ -234,19 +193,6 @@ void cycleMoves(float id, float seq, out vec3 ax, out vec3 ly, out vec3 dr) {
     ax.z = a; ly.z = layer; dr.z = dir;
 }
 
-// Move j of a cube's base scramble. homeOf() walks the same sequence.
-void baseMove(float id, float j, out float axis, out float layer, out float dir) {
-    float stp;
-    float a = firstAxis(id, BASE);
-    for (int i = 1; i < 20; i++) {
-        if (float(i) > j + 0.5) break;
-        decode(moveCode(id, BASE, float(i)), stp, layer, dir);
-        a = imod(a + stp, 3.0);
-    }
-    decode(moveCode(id, BASE, j), stp, layer, dir);
-    axis = a;
-}
-
 float easeTurn(float x) {
     // a fast flick that overshoots ~10% and settles exactly at 1
     x = clamp(x, 0.0, 1.0);
@@ -258,13 +204,12 @@ struct Cube {
     float id;      // hashes this cube's moves
     float cycKey;  // which burst it is in (its moves change every burst)
     float pre;     // moves of this burst applied, 0..3
-    float nb;      // moves of the base scramble applied (fewer while a word solves)
+    float nb;      // moves of the base scramble applied
     float axis;    // the move in progress: axis, layer, angle (0 = none)
     float layer;
     float ang;
     float lift;    // how far it has slid out along each axis, 0..LIFT
-    float letter;  // printed glyph, or -1
-    float src;     // where the move in progress comes from: 0 none, 1 pair, 2 base
+    float src;     // where the move in progress comes from: 0 none, 1 burst
     float idx;     // which move of that source
     float sgn;     // +1 making it, -1 undoing it
 };
@@ -312,53 +257,14 @@ void ordinaryState(vec3 cid, vec3 key, inout Cube c) {
     c.lift = LIFT * (1.0 - smoothstep(0.0, 1.0, (u - (6.0 + TURN) * sl) / LIFT_S));
 }
 
-// A word cube. It rests at its base scramble, except in an epoch where its
-// site spells the word: then, in its class's window, it slides out, undoes
-// its whole scramble at speed, and settles; holds the word; and in a later
-// window of its class does the scramble again.
-void siteState(vec3 cid, vec3 key, float nbase, inout Cube c) {
-    float ep = floor(time / EPOCH);
-    float block = floor(key.x * (1.0 / SITE_BLOCK));
-    if (hash13(vec3(block, key.y, 4000.0 + imod(ep, 35.0))) >= EVENT_P) return;  // 35 epochs a loop
-    float T0 = ep * EPOCH;
-    float cls = classOf(cid);
-    float R0 = T0 + (EV_SCRAMBLE + cls) * WIN + EV_LEAD;
-    bool undo = time < R0;
-    float u = time - (undo ? T0 + (EV_SOLVE + cls) * WIN + EV_LEAD : R0);
-    if (u < EV_LIFT) {
-        c.nb = undo ? nbase : 0.0;
-        c.lift = LIFT * smoothstep(0.0, 1.0, u / EV_LIFT);   // 0 while u < 0
-        return;
-    }
-    u -= EV_LIFT;
-    if (u < nbase * EV_MOVE) {
-        float j = floor(u / EV_MOVE);
-        float f = u - j * EV_MOVE;
-        c.lift = LIFT;
-        c.src = 2.0;
-        if (undo) { c.nb = nbase - j; c.idx = nbase - 1.0 - j; c.sgn = -1.0; }
-        else      { c.nb = j;         c.idx = j;               c.sgn = 1.0; }
-#if !defined(OMACUBE_STATIC)
-        float dir;
-        baseMove(c.id, c.idx, c.axis, c.layer, dir);
-        c.ang = c.sgn * dir * easeTurn(f / (EV_MOVE * TURN)) * HALF_PI;
-#endif
-        return;
-    }
-    c.nb = undo ? 0.0 : nbase;
-    c.lift = LIFT * (1.0 - smoothstep(0.0, 1.0, (u - nbase * EV_MOVE) / EV_LIFT));
-}
-
 Cube cubeState(vec3 cid) {
     Cube c;
     vec3 key = cellKey(cid);
     c.id = cubeIdOf(key);
     c.cycKey = 0.0; c.pre = 0.0; c.lift = 0.0;
     c.nb = baseLen(key);
-    c.letter = siteLetter(cid);
     noMove(c);
-    if (c.letter > -0.5) siteState(cid, key, c.nb, c);
-    else ordinaryState(cid, key, c);       // tests freeAt() only mid-burst
+    ordinaryState(cid, key, c);            // tests freeAt() only mid-burst
 #if defined(OMACUBE_STATIC)
     c.lift = 0.0;                        // self-check 6: nothing turns or slides
 #endif
@@ -405,7 +311,6 @@ struct Hit {
     float cycKey;
     float pre;
     float nb;
-    float letter;
     float axis;    // rotation of the cubie's frame (ang = 0: not moving)
     float ang;
     float lift;    // how far the cube has slid out: it is nearer by lift * sqrt(3)
@@ -422,7 +327,6 @@ struct Hit {
 void fillHit(inout Hit hit, Cube cb, vec3 id, vec3 cell, vec3 lp, bool moving) {
     hit.cell = cell; hit.lp = lp; hit.key = cellKey(id); hit.cid = id;
     hit.id = cb.id; hit.cycKey = cb.cycKey; hit.pre = cb.pre; hit.nb = cb.nb;
-    hit.letter = cb.letter;
     hit.axis = cb.axis; hit.ang = moving ? cb.ang : 0.0;
     hit.lift = cb.lift;
 #if defined(OMACUBE_DEBUG)
@@ -564,26 +468,24 @@ vec3 stickerColor(vec3 n) {
     return c5.rgb;
 }
 
-// Undo one quarter turn if the cubie at c is part of it. The point l on the
-// sticker turns with it, so printed stickers keep their orientation.
-void undoMove(inout vec3 c, inout vec3 n, inout vec3 l, float axis, float layer, float dir) {
+// Undo one quarter turn if the cubie at c is part of it.
+void undoMove(inout vec3 c, inout vec3 n, float axis, float layer, float dir) {
     if (layer > 1.5 || abs(comp(c, axis) - layer) < 0.5) {
         c = rot90(c, axis, -dir);
         n = rot90(n, axis, -dir);
-        l = rot90(l, axis, -dir);
     }
 }
 
 // Where a sticker started on the solved cube: undo this burst's applied
-// moves, newest first, then the applied part of the base scramble, newest
-// first. The base moves are decoded once, forwards, then undone backwards.
-void homeOf(Hit h, inout vec3 c, inout vec3 n, inout vec3 l) {
+// moves, newest first, then the base scramble, newest first. The base
+// moves are decoded once, forwards, then undone backwards.
+void homeOf(Hit h, inout vec3 c, inout vec3 n) {
     if (h.pre > 0.5) {
         vec3 ax, ly, dr;
         cycleMoves(h.id, h.cycKey, ax, ly, dr);
-        if (h.pre > 2.5) undoMove(c, n, l, ax.z, ly.z, dr.z);
-        if (h.pre > 1.5) undoMove(c, n, l, ax.y, ly.y, dr.y);
-        undoMove(c, n, l, ax.x, ly.x, dr.x);
+        if (h.pre > 2.5) undoMove(c, n, ax.z, ly.z, dr.z);
+        if (h.pre > 1.5) undoMove(c, n, ax.y, ly.y, dr.y);
+        undoMove(c, n, ax.x, ly.x, dr.x);
     }
     float axs[20];
     float lys[20];
@@ -599,7 +501,7 @@ void homeOf(Hit h, inout vec3 c, inout vec3 n, inout vec3 l) {
     for (int i = 0; i < 20; i++) {                      // undo base moves nb-1 .. 0
         int j = 19 - i;
         if (float(j) >= h.nb) continue;
-        undoMove(c, n, l, axs[j], lys[j], drs[j]);
+        undoMove(c, n, axs[j], lys[j], drs[j]);
     }
 }
 
@@ -750,22 +652,9 @@ void main() {
             float cover = pixelArt > 0.5 ? step(sd, 0.0) : clamp(0.5 - sd / w, 0.0, 1.0);
             shownCover = cover;
             if (cover > 0.0) {
-                vec3 c = h.cell, n = nl, l = h.lp;
-                homeOf(h, c, n, l);
+                vec3 c = h.cell, n = nl;
+                homeOf(h, c, n);
                 vec3 stk = stickerColor(n);
-                // Picture cubes: the glyph is printed across the three faces
-                // that face the viewer when the cube is solved, so that seen
-                // from here it reads undistorted: each point carries the ink
-                // at its own screen offset from the cube's centre.
-                if (h.letter > -0.5 && n.x + n.y + n.z > 0.5) {
-                    vec3 hp = c + l;
-                    vec2 gq = vec2(dot(hp, rt), dot(hp, up)) * (1.0 / GLYPH) + 0.5;
-                    if (gq.x > 0.0 && gq.x < 1.0 && gq.y > 0.0 && gq.y < 1.0) {
-                        float ink = texture(glyphs, vec2((h.letter + gq.x) * (1.0 / SITE_LEN), 1.0 - gq.y)).r;
-                        ink = pixelArt > 0.5 ? step(0.5, ink) : ink;
-                        stk = mix(stk, bodyColor.rgb, ink);
-                    }
-                }
                 // blend in linear light, then back to sRGB
                 vec3 body = pow(bodyColor.rgb, vec3(2.2));
                 col = pow(mix(body, pow(stk, vec3(2.2)), cover), vec3(1.0 / 2.2));
@@ -785,16 +674,12 @@ void main() {
     col = dim;
     if (hitAny && h.src > 0.5) {
         float ax, ly, dr;
-        if (h.src < 1.5) {
+        {
             vec3 ax3, ly3, dr3;
             cycleMoves(h.id, h.cycKey, ax3, ly3, dr3);
             ax = comp(ax3, h.idx); ly = comp(ly3, h.idx); dr = comp(dr3, h.idx);
             // making move idx: idx moves applied; undoing it: idx + 1
             if (h.pre != h.idx + (h.sgn > 0.0 ? 0.0 : 1.0)) col = bad;
-        } else {
-            baseMove(h.id, h.idx, ax, ly, dr);
-            // re-scrambling move idx: idx applied; solving it away: idx + 1
-            if (h.nb != h.idx + (h.sgn > 0.0 ? 0.0 : 1.0)) col = bad;
         }
         bool same = ax == h.mvAxis && ly == h.mvLayer
                  && (abs(h.mvAng) < 1e-4 || sign(h.sgn * dr) == sign(h.mvAng));
@@ -818,8 +703,7 @@ void main() {
             if (abs(ck) < 0.5) continue;
             vec3 c = h.cell;
             vec3 n = setComp(vec3(0.0), fk, ck);
-            vec3 l = vec3(0.0);
-            homeOf(h, c, n, l);
+            homeOf(h, c, n);
             if (home0.x > 8.0) home0 = c;
             ok = ok && c == home0 && dot(c, n) > 0.5;
             float na = abs(n.x) > 0.5 ? 1.0 : (abs(n.y) > 0.5 ? 2.0 : 4.0);
@@ -869,16 +753,6 @@ void main() {
             // the hit; a missed slid-out cube would be off by up to 1.09
             if (abs(dot(pa - pb, fw)) > 0.02) col = bad;
         }
-    }
-#elif OMACUBE_DEBUG == 7
-    // a word cube at rest with nothing applied is exactly solved: every
-    // sticker's home is where it is, so the print lines up
-    col = dim;
-    if (hitAny && h.letter > -0.5 && h.nb < 0.5 && h.pre < 0.5 && dot(h.cell, nl) > 0.5) {
-        vec3 c = h.cell, n = nl, l = h.lp;
-        homeOf(h, c, n, l);
-        if (c != h.cell || n != nl || length(l - h.lp) > 1e-5) col = bad;
-        else col = vec3(0.0, 0.6, 0.0);
     }
 #endif
 #endif

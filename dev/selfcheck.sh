@@ -10,7 +10,6 @@
 #   6  with nothing turning, no visible face is partly covered by a cube
 #      in front of it: no triangles, only whole faces
 #   6x the same check on the previous random fill: expected to FAIL
-#   7  a word cube with nothing applied is exactly solved (print lines up)
 #   8  the fast drawing (march every cube in its cell, then add slid-out cubes
 #      nearer by lift * sqrt 3) matches marching the slid-out stack directly
 #   5  both loops are seamless: the picture one cube loop later (time +
@@ -24,7 +23,7 @@ rm -rf "$out"; mkdir -p "$out"
 times=${SELFCHECK_TIMES:-"2.37 11.9 20.0 40.2 3600.5 46080.7"}
 W=${SELFCHECK_W:-1600}; H=${SELFCHECK_H:-900}
 status=0
-for mode in 1 1x 2 3 4 6 6x 7 8; do
+for mode in 1 1x 2 3 4 6 6x 8; do
   case $mode in
     1x) defs=(-DOMACUBE_DEBUG=1 -DOMACUBE_NO_FAR_BOUND) ;;
     6)  defs=(-DOMACUBE_DEBUG=6 -DOMACUBE_STATIC) ;;

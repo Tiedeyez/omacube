@@ -101,7 +101,7 @@ A move slot lasts 0.95 s × m / 8 for a speed m in {6, …, 11} that each cube k
 
 The shader works in 32-bit floats, so its clock has to wrap. The loop is arranged so that wrapping changes nothing on screen.
 
-- **The cube loop: 4189.5 s (about 70 minutes).** That is exactly 420 class windows (140 per class) and 35 word epochs of 12 windows. A cube's moves and burst moment depend on its window number modulo 140, and a site's word on its epoch modulo 35, so everything repeats exactly.
+- **The cube loop: 4189.5 s (about 70 minutes).** That is exactly 420 class windows (140 per class). A cube's moves and burst moment depend on its window number modulo 140, so everything repeats exactly.
 - **The field holds still.** The camera moves only with workspace switches, along `rt`, which is the lattice direction (3, 0, −3). Every cell's random choices come from its id modulo 1024 on each axis, and its class from `x − y` modulo 3. A slide of 3072 lattice steps shifts every cell id by 3072 × (1, 0, −1): the same values modulo 1024, the same layer and the same class. So the slide wraps there, every 3072 · 3√2 ≈ 13,033 units, with no jump.
 
 `check-math.py` verifies the loop and the slide wrap exactly. Self-check 5 renders the picture at 2.37 s, then again one cube loop later and one slide wrap later, and compares them:
@@ -156,7 +156,7 @@ With `pixelSize` above 0 it is drawn as pixel art instead. Each art pixel covers
 - **Hard edges.** A pixel is either all sticker or all plastic: `step(sd, 0)` instead of the smooth one-pixel ramp.
 - **Whole-pixel sliding.** As the camera slides on a workspace switch, its offset along `rt` is rounded to whole art pixels, so the picture moves by exact pixel steps and edges never shimmer.
 
-Measured on an RTX 4070 SUPER at 3440x1440, whole-GPU power with the background showing: 6K smooth about 147 W (the GPU at full clock, 76% busy), native smooth about 48 W, pixel art at 4 about 16 W. The original shader, with no physics or words, drew about 38 W at native smooth.
+Measured on an RTX 4070 SUPER at 3440x1440, whole-GPU power with the background showing: 6K smooth about 147 W (the GPU at full clock, 76% busy), native smooth about 48 W, pixel art at 4 about 16 W. The original shader, without the physics, drew about 38 W at native smooth (these figures included the since-removed word print).
 
 ## 13. Cube-face tiling
 
@@ -213,21 +213,3 @@ So the shader doesn't march slid-out cubes at all. It marches the stack with eve
 Each one is traced on its own. The nearest surface, march or candidate, after taking off `lift·√3`, is what the pixel shows.
 
 Marching the slid-out stack directly would need a much smaller bound (`3 + min|q| − LIFT/2 − R`, as small as 0.087 against 0.402), and on the GPU it cost about 108 W against 48 W at native resolution. Self-check 8 keeps that direct march as a reference and compares the two on every sticker pixel: they agree, except for at most a pixel per frame on silhouettes where the two sample a depth edge differently. Self-check 3 shows the march back at about 13.5 steps per ray (the original averaged 13.9).
-
-## 16. Words
-
-Some rows of the top layer are picture cubes. Together they spell the Omarchy lockup: the Omarchy logo (U+E900 from Omarchy's own font), then O M A R C H Y (the Omarchy Font by Mark Cuda, traced from the official wordmark). `tools/build-glyphs.sh` renders the eight glyphs into `glyphs.png`.
-
-- **Sites.** A site is eight cells in a row of the top layer, along (1, 0, −1): straight left to right on screen. Sites sit in every fourth row, at most one per 16-cell block (75% of blocks), at a random offset that leaves at least two cells between sites. Site cells and everything in their down-cones are always present. A union of down-sets is a down-set, so faces stay whole (`check-math.py` checks it).
-- **The print.** Each glyph is printed across the three faces a solved cube turns to the viewer. A point `p` on those faces carries the ink at `(p·rt, p·up)`, its own screen offset from the cube's centre, so the solved cube shows the glyph undistorted from here. A glyph cell is 3.6 × 3.6 units, and every glyph stays at least 0.5 units inside the cube's outline. The ink is the plastic colour.
-- **Picture stickers.** A sticker's colour and its print both come from undoing the moves back to the solved cube. The hit point is undone along with the cubie and the face, so a printed fragment keeps its orientation, centres included (`check-math.py` checks 300 random scrambles).
-
-## 17. Word events
-
-Time is also cut into epochs of 12 windows (119.7 s). In each epoch a site spells its word with chance 0.7. Word cubes rest at their base scramble the rest of the time.
-
-- **Solve.** In the epoch's first window of its class (windows 0, 1, 2 by class), each word cube slides out, undoes its whole scramble at 0.4 s a move, and settles. Up to 20 moves take 8.6 s, inside the 9.975 s window.
-- **Hold.** From the end of window 2 the whole word stands solved and still, for at least 31 s.
-- **Scramble again.** In windows 6, 7 and 8 the cubes slide out, redo their scrambles and settle. The event ends well before the next epoch.
-
-Neighbouring letters are in different classes, so they solve one after another, and no two neighbours ever move at once. `check-math.py` follows every cubie across every boundary of 400 random events: nothing jumps, every turn happens fully slid out, a word cube is out only in its class's window, and during the hold every word cube is exactly solved. Self-check 7 confirms on the GPU that a word cube with nothing applied is exactly solved, so its print lines up.

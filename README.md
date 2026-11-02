@@ -1,19 +1,18 @@
 # Omacube
 
-Your Omarchy desktop as a 3x3 puzzle cube. Omacube is an animated background: an endless isometric stack of 3x3 cubes that turn their layers and tumble, and now and then spell the Omarchy lockup. Its companion theme tiles your windows on a 3x3 cube face, and they move by real cube turns.
+Your Omarchy desktop as a 3x3 puzzle cube. Omacube is an animated background: an endless isometric stack of 3x3 cubes that turn their layers and tumble. Its companion theme tiles your windows on a 3x3 cube face, and they move by real cube turns.
 
 ![Omacube](preview.png)
 
 - **An endless stack.** The view looks straight down a cube's diagonal at an infinite pile of cubes stacked into towers, staircases and hexagonal stars. Every cube rests on the cubes behind it, so you only ever see whole cubes and whole faces.
 - **Real cubes, real turns.** Every cube is a legal puzzle state: a solved cube put through its own scramble. A cube makes three moves, each a single layer turn or a whole-cube tumble, rests, then undoes them in reverse. Sticker colours travel with the turning layers.
 - **Real physics.** Nothing ever passes through anything. Only cubes with nothing in front of them can move; each slides out of the pile, towards you, far enough that its turning layers clear every neighbour, and settles back afterwards. Neighbours take turns, so two never collide.
-- **It spells Omarchy.** Some rows of cubes are picture cubes printed with the Omarchy logo and O M A R C H Y. Every couple of minutes a row speed-solves itself, letter by letter, holds the word for half a minute, and scrambles again.
 - **6K.** It renders at 6144 pixels across and scales down to your screen, for clean edges. Pixel art (hard pixels in your theme's exact colours) is one setting away, and far lighter on the GPU.
 - **Workspaces slide the stack.** Every workspace switch slides the field one screen width sideways, with your windows, on the same flick-and-settle curve.
 - **Your theme's colours.** The cubes take their sticker colours from your current Omarchy theme and crossfade when you switch themes. For the classic cube colours, pick the Omacube theme in the theme switcher.
 - **Cube-face tiling** (with the Omacube theme). Each workspace is a 3x3 cube face. Windows tile into it like stickers and move by real face turns and layer turns.
 
-The plugin is one GPU fragment shader. It reads only your current theme's colours and its own glyph image, writes no files, runs no processes and makes no network connections. See [DISCLOSURE.md](DISCLOSURE.md).
+The plugin is one GPU fragment shader. It reads only your current theme's colours, writes no files, runs no processes and makes no network connections. See [DISCLOSURE.md](DISCLOSURE.md).
 
 ## Install
 
@@ -128,11 +127,8 @@ Measured as whole-GPU power with the background showing, on an RTX 4070 SUPER at
 
 - `shaders/omacube.frag` is the shader source. `shaders/omacube.frag.qsb` is the compiled form Qt loads. Rebuild it with `tools/build-shader.sh` (needs `qt6-shadertools`).
 - `dev/preview.sh [outdir] [frames] [fps] [t0] [width] [height] [qsb]` renders PNG frames without installing the plugin. Set `OMACUBE_THEME=/path/to/colors.toml` for a theme's colours, `OMACUBE_PIXEL=1` for pixel art (render at the art-pixel size, then upscale with nearest neighbour), and `OMACUBE_PAN=<units>` to move the camera sideways.
-- `tools/build-glyphs.sh` rebuilds `glyphs.png` from the two fonts (needs ImageMagick).
 - `dev/sticker-window.sh <n> [hex]` opens a demo window that looks like a cube sticker, for trying out the tiling.
 
 ## Credits
 
 Built by Tiedeyez. MIT licence. "Omacube" is an independent fan project and is not affiliated with any puzzle-cube trademark holder.
-
-The word glyphs in `glyphs.png` come from two fonts: the Omarchy logo from Omarchy's own `omarchy.ttf`, and O M A R C H Y from the [Omarchy Font](https://tinker.markcuda.com/omarchy-font/) by Mark Cuda (MIT, unofficial), traced from the official wordmark. The Omarchy name and wordmark belong to their owners; Omacube is not affiliated with Omarchy or 37signals.

@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "tiedeyez.omacube",
   "name": "Omacube",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "Tiedeyez",
   "license": "MIT",
-  "description": "Your desktop as a 3x3 puzzle cube. An animated background of an endless isometric stack of cubes that turn their layers and tumble with real physics: only free cubes move, sliding out of the pile so nothing ever passes through anything. Now and then a row of picture cubes speed-solves to spell the Omarchy logo and wordmark. Every cube is a legal cube state, coloured from your current Omarchy theme. Workspace switches slide the stack sideways with your windows. Renders at 6K by default; pixel art is one setting away. The optional Omacube theme adds the classic colours and cube-face tiling. One GPU fragment shader; reads only the theme colours and its own glyph image, no processes or network.",
+  "description": "Your desktop as a 3x3 puzzle cube. An animated background of an endless isometric stack of cubes that turn their layers and tumble with real physics: only free cubes move, sliding out of the pile so nothing ever passes through anything. Every cube is a legal cube state, coloured from your current Omarchy theme. Workspace switches slide the stack sideways with your windows. Renders at 6K by default; pixel art is one setting away. The optional Omacube theme adds the classic colours and cube-face tiling. One GPU fragment shader; reads only the theme colours, no processes or network.",
   "kinds": [
     "service"
   ],
