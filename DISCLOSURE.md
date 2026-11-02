@@ -19,7 +19,7 @@ Nothing. The plugin creates no files, folders, caches or settings.
 
 | What | How | Why |
 |---|---|---|
-| `shaders/omacube.frag.qsb` (in the plugin folder) | Qt's `ShaderEffect` loads it | The compiled shader that draws the background |
+| `shaders/omacube.frag.qsb` (in the plugin folder) | Qt's `ShaderEffect` loads it | The compiled shader that draws the background. It rebuilds byte-for-byte from `shaders/omacube.frag`; see [shaders/PROVENANCE.md](shaders/PROVENANCE.md) for the tool, command and hashes |
 | `mosaic.png` (in the plugin folder) | A hidden Qt `Image`, handed to the shader as a texture | The sticker colours of the 20 cube states that spell OMARCHY |
 | The focused workspace ID, each monitor's active workspace, and whether that workspace has a fullscreen window | Quickshell's built-in `Quickshell.Hyprland` module, from Hyprland's event socket | The sideways slide on a workspace switch, and pausing while a fullscreen window covers the screen |
 | The list of screens | `Quickshell.screens` | One background surface per screen |
