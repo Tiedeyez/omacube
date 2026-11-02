@@ -28,7 +28,7 @@ Item {
   // Smooth mode (pixelSize 0): the shader renders this many pixels across,
   // then the result is scaled to the screen with mipmapped filtering. 6144
   // (6K) supersamples a 3440-wide screen about 1.8x. 0 = screen resolution.
-  readonly property int renderWidth: 6144
+  readonly property int renderWidth: 0
   // Pixel art instead: each art pixel is this many screen pixels, drawn with
   // hard edges in the theme's exact colours. Far cheaper: about 1/16 of the
   // pixels at 4.

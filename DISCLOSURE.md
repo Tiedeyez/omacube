@@ -62,7 +62,7 @@ These are in the repository but run only if you run them yourself:
 
 ## What it costs
 
-An animated background makes the compositor repaint every frame, including blur behind translucent windows. The default renders at 6K and is heavy: on an RTX 4070 SUPER at 3440x1440, whole-GPU power was about 147 W with the background showing (GPU at full clock, 76% busy), against about 48 W at the screen's own resolution and about 16 W as pixel art. Redrawing stops while a fullscreen window covers the screen. See the README's Settings and Performance sections for how to lower the resolution and frame rate.
+An animated background makes the compositor repaint every frame, including blur behind translucent windows. On an RTX 4070 SUPER at 3440x1440, whole-GPU power with the background showing was about 48 W at the default (the screen's own resolution), about 147 W at the optional 6K (GPU at full clock, 76% busy) and about 16 W as pixel art. Redrawing stops while a fullscreen window covers the screen. See the README's Settings and Performance sections for how to lower the resolution and frame rate.
 
 ## Maintainer and licence
 

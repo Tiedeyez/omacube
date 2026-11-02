@@ -148,7 +148,7 @@ So opposite faces stay opposite, and every cube remains a legal state in any pal
 
 ## 12. Resolution and pixel art
 
-By default the background renders smooth at 6144 pixels across (6K) and is scaled to the screen with mipmapped filtering: on a 3440x1440 screen that is about 1.8x supersampling, for clean silhouettes on top of the per-pixel sticker antialiasing. `renderWidth` sets the width; 0 renders at the screen's own resolution.
+By default the background renders smooth at the screen's own resolution (`renderWidth: 0`). Setting `renderWidth: 6144` renders at 6K and scales to the screen with mipmapped filtering: on a 3440x1440 screen that is about 1.8x supersampling, for cleaner silhouettes on top of the per-pixel sticker antialiasing.
 
 With `pixelSize` above 0 it is drawn as pixel art instead. Each art pixel covers exactly `pixelSize` screen pixels, with no blending, so the image uses only the theme's exact colours.
 
