@@ -16,7 +16,8 @@ import "Palette.js" as Palette
 // pile with OMARCHY in a sticker mosaic on its face. The cubes take their
 // colours from the active Omarchy theme.
 //
-// It reads two small files, the active theme's colors.toml and theme.name,
+// It reads three small files, the active theme's colors.toml and theme.name
+// and its own entry in ~/.config/omarchy/shell.json (optional settings),
 // plus its own mosaic.png; writes nothing, runs no processes and touches no
 // network (DISCLOSURE.md).
 // It sits on the "bottom" layer (above the stock wallpaper, below windows)
@@ -24,17 +25,60 @@ import "Palette.js" as Palette
 Item {
   id: root
 
-  // ---- tuning ------------------------------------------------------------
-  // Smooth mode (pixelSize 0): the shader renders this many pixels across,
-  // then the result is scaled to the screen with mipmapped filtering. 6144
-  // (6K) supersamples a 3440-wide screen about 1.8x. 0 = screen resolution.
-  readonly property int renderWidth: 0
-  // Pixel art instead: each art pixel is this many screen pixels, drawn with
-  // hard edges in the theme's exact colours. Far cheaper: about 1/16 of the
-  // pixels at 4.
-  readonly property int pixelSize: 0
-  // Redraws per second. The shader only redraws when the clock ticks.
-  readonly property int fps: 24
+  // ---- settings ------------------------------------------------------------
+  // The defaults are here. Any of them can be set per machine in the
+  // plugin's own entry in ~/.config/omarchy/shell.json, which is watched, so
+  // a change applies at once, for example on integrated graphics:
+  //   "plugins": [ { "id": "tiedeyez.omacube", "pixelSize": 3, "fps": 20 } ]
+  // (`omarchy plugin disable` drops the entry, and its settings with it.)
+  //
+  // renderWidth, smooth mode (pixelSize 0): the shader renders this many
+  // pixels across, then the result is scaled to the screen with mipmapped
+  // filtering. 6144 (6K) supersamples a 3440-wide screen about 1.8x.
+  // 0 = the screen's resolution.
+  readonly property int defaultRenderWidth: 0
+  // pixelSize, pixel art instead: each art pixel is this many screen pixels,
+  // drawn with hard edges in the theme's exact colours. Far cheaper: 1/9 of
+  // the pixels at 3, 1/16 at 4.
+  readonly property int defaultPixelSize: 0
+  // fps, redraws per second. The shader only redraws when the clock ticks.
+  readonly property int defaultFps: 24
+  // pauseUnderWindows: hold the animation still while tiled windows fill
+  // the workspace (only the gaps between them show it), as it already does
+  // under a fullscreen window. Workspace slides still play.
+  readonly property bool defaultPauseUnderWindows: true
+
+  property var settings: ({})
+  function setting(key, fallback, lo, hi) {
+    var v = settings[key]
+    return typeof v === "number" && isFinite(v) ? Math.max(lo, Math.min(hi, Math.round(v))) : fallback
+  }
+  readonly property int renderWidth: setting("renderWidth", defaultRenderWidth, 0, 16384)
+  readonly property int pixelSize: setting("pixelSize", defaultPixelSize, 0, 32)
+  readonly property int fps: setting("fps", defaultFps, 1, 60)
+  readonly property bool pauseUnderWindows: typeof settings.pauseUnderWindows === "boolean"
+    ? settings.pauseUnderWindows : defaultPauseUnderWindows
+
+  function entryFrom(text) {
+    try {
+      var config = JSON.parse(text)
+      var list = config && Array.isArray(config.plugins) ? config.plugins : []
+      for (var i = 0; i < list.length; i++)
+        if (list[i] && list[i].id === "tiedeyez.omacube") return list[i]
+    } catch (e) {}
+    return ({})
+  }
+  FileView {
+    path: {
+      var home = Quickshell.env("HOME")
+      return home ? home + "/.config/omarchy/shell.json" : ""
+    }
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.settings = root.entryFrom(text())
+    onLoadFailed: root.settings = ({})
+  }
 
   // ---- colours from the active theme --------------------------------------
   // Palette.js maps the theme's red, orange, foreground (as white), yellow,
@@ -126,7 +170,30 @@ Item {
       turns += id > lastWorkspace ? 1 : -1
     lastWorkspace = id
   }
-  Component.onCompleted: workspaceMoved()
+  Component.onCompleted: {
+    workspaceMoved()
+    if (pauseUnderWindows) Hyprland.refreshToplevels()
+  }
+
+  // ---- what covers the desktop -----------------------------------------------
+  // Whether a window is tiled or floating comes from Hyprland's client list,
+  // which Quickshell reads on request: read it again shortly after any event
+  // that can change which windows fill a workspace.
+  Timer {
+    id: toplevelRefresh
+    interval: 60
+    onTriggered: Hyprland.refreshToplevels()
+  }
+  Connections {
+    target: Hyprland
+    enabled: root.pauseUnderWindows
+    function onRawEvent(event) {
+      var n = event.name
+      if (n === "openwindow" || n === "closewindow" || n === "movewindowv2" || n === "changefloatingmode")
+        toplevelRefresh.restart()
+    }
+  }
+  onPauseUnderWindowsChanged: if (pauseUnderWindows) Hyprland.refreshToplevels()
 
   // ---- one surface per screen ---------------------------------------------
   Variants {
@@ -138,9 +205,29 @@ Item {
       required property var modelData
       screen: modelData
 
-      // Stop redrawing while a fullscreen window hides the desktop.
+      // Stop redrawing while a fullscreen window hides the desktop, or tiled
+      // windows fill it: the layouts leave only the gaps between them.
+      // Floating windows don't count.
       readonly property var monitor: Hyprland.monitorFor(modelData)
-      readonly property bool covered: !!(monitor && monitor.activeWorkspace && monitor.activeWorkspace.hasFullscreen)
+      readonly property var workspace: monitor ? monitor.activeWorkspace : null
+      readonly property bool tiled: {
+        if (!root.pauseUnderWindows || !workspace || !workspace.toplevels) return false
+        var list = workspace.toplevels.values
+        for (var i = 0; i < list.length; i++) {
+          var o = list[i] ? list[i].lastIpcObject : null
+          if (o && o.floating === false) return true
+        }
+        return false
+      }
+      readonly property bool covered: !!(workspace && workspace.hasFullscreen) || tiled
+      // This screen's clock follows the shared one and holds still while the
+      // screen is covered, so a covered screen stops redrawing even while
+      // another screen keeps the animation going.
+      property real shownClock: 0
+      Connections {
+        target: root
+        function onClockChanged() { if (!panel.covered) panel.shownClock = root.clock }
+      }
 
       color: root.palette.empty
       anchors { top: true; bottom: true; left: true; right: true }
@@ -149,6 +236,35 @@ Item {
       WlrLayershell.layer: WlrLayer.Bottom
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
       mask: Region {}
+
+      // The stack's height map: a first pass, drawn by the same shader,
+      // holding the top cube of every cell column on screen, one texel per
+      // column (MATH.md, "The height map"). The picture reads which cells
+      // hold a cube from it, instead of hashing up to 20 cells per lookup.
+      // It depends only on which columns are on screen, so it redraws only
+      // while the stack slides. It sits under the opaque canvas, unseen.
+      ShaderEffect {
+        id: heightMap
+        // columns on screen: ci from u = x * sqrt(2) / 3 across the width,
+        // cj = (y * sqrt(6) / 3 + u) / 2, plus a margin of 5 columns that
+        // covers every cell a ray looks up beside its own spot
+        readonly property real halfU: 15 * fx.aspect * 0.47140452
+        readonly property real u0: fx.pan * 0.47140452 - halfU
+        property vector2d hOrigin: Qt.vector2d(Math.floor(u0) - 5, Math.floor((u0 - 15 * 0.81649658) / 2) - 5)
+        property vector2d hSize: Qt.vector2d(Math.ceil(2 * halfU) + 14, Math.ceil(halfU + 15 * 0.81649658) + 14)
+        property real mapPass: 1
+        width: hSize.x; height: hSize.y
+        blending: false
+        fragmentShader: Qt.resolvedUrl("shaders/omacube.frag.qsb")
+        property var mosaic: mosaicData
+        property var heights: mosaicData        // unused in this pass, like these
+        property real time; property real pan; property real aspect; property real texel; property real pixelArt
+        property color c0; property color c1; property color c2; property color c3; property color c4; property color c5
+        property color bodyColor; property color bgColor
+        layer.enabled: true
+        layer.smooth: false
+        layer.textureSize: Qt.size(hSize.x, hSize.y)
+      }
 
       Item {
         id: canvas
@@ -173,9 +289,14 @@ Item {
         layer.textureSize: Qt.size(texW, texH)
 
         ShaderEffect {
+          id: fx
           anchors.fill: parent
           fragmentShader: Qt.resolvedUrl("shaders/omacube.frag.qsb")
-          property real time: root.clock % root.cubeLoop
+          property var heights: heightMap
+          property vector2d hOrigin: heightMap.hOrigin
+          property vector2d hSize: heightMap.hSize
+          property real mapPass: 0
+          property real time: panel.shownClock % root.cubeLoop
           // one screen width (2 * VIEW * aspect world units) per workspace
           property real pan: root.wrap(root.turnPos * 30 * aspect, root.panPeriod)
           property real aspect: width / Math.max(1, height)

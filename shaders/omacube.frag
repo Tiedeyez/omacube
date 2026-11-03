@@ -46,10 +46,17 @@ layout(std140, binding = 0) uniform buf {
     vec4 c5;
     vec4 bodyColor; // plastic: the lines between stickers, the inner faces, the print
     vec4 bgColor;   // anything a ray misses
+    vec2 hOrigin;   // the height map's first column (ci, cj)
+    vec2 hSize;     // the height map's size in columns
+    float mapPass;  // 1: draw the height map instead of the picture
 };
 // The 20 mosaic states (tools/build-mosaic.py): row k holds cube k's 54
 // sticker colours as index * 32, at x = face * 9 + (u + 1) * 3 + (v + 1).
 layout(binding = 1) uniform sampler2D mosaic;
+// The stack's height map: for each cell column on screen, how many cells
+// above the always-full layers hold a cube (MATH.md, "The height map").
+// This shader draws it too, in a tiny pass of its own (mapPass = 1).
+layout(binding = 2) uniform sampler2D heights;
 
 const float HALF_PI = 1.5707963;
 const float P = 3.0;          // lattice pitch: neighbouring cubes touch
@@ -169,16 +176,10 @@ bool inMonument(vec3 v, out vec3 T) {
 // down-set, and missing cells leave the stair-stepped hexagonal stars.
 // A monument's corner, every cell at or behind its apex on all three axes,
 // is a down-set too, and a union of down-sets is a down-set.
-bool occupied(vec3 id) {
-    float s = id.x + id.y + id.z;
-    if (s < -3.5) return true;
-    vec3 T;
-    if (inMonument(id, T)) return true;
-    if (s > 0.5) return false;
-#if defined(OMACUBE_OLD_FILL)
-    return hash13(cellKey(id)) < 0.74;  // the previous rule, to demonstrate its bug
-#endif
-    float room = s + 3.0;               // 0..3: cone depth left inside the band
+//
+// The cone rule for one cell of the band (coordinate sum -3..0).
+bool coneOn(vec3 id) {
+    float room = id.x + id.y + id.z + 3.0;  // 0..3: cone depth left inside the band
     for (int a = 0; a < 4; a++) {
         if (float(a) > room + 0.5) break;
         for (int b = 0; b < 4; b++) {
@@ -190,6 +191,88 @@ bool occupied(vec3 id) {
         }
     }
     return true;
+}
+
+// The rule itself, cell by cell. The picture reads it from the height map
+// below; this is what draws the map and what the self-checks compare with.
+bool occupiedRule(vec3 id) {
+    float s = id.x + id.y + id.z;
+    if (s < -3.5) return true;
+    vec3 T;
+    if (inMonument(id, T)) return true;
+    if (s > 0.5) return false;
+#if defined(OMACUBE_OLD_FILL)
+    return hash13(cellKey(id)) < 0.74;  // the previous rule, to demonstrate its bug
+#endif
+    return coneOn(id);
+}
+
+// ---- the height map ------------------------------------------------------------
+//
+// Cell id lies in column (ci, cj) = (id.x - id.z, id.y - id.z), the line of
+// cells (ci + n, cj + n, n) running along the view axis (1, 1, 1). In a
+// down-set, a cell's cube means a cube in the cell behind it along -x, -y
+// and -z, so in the cell id - (1, 1, 1) too: down a column the cells hold a
+// cube up to some top cell and are empty above it. One number per column,
+// its top, describes the whole stack. The cells with sum below -3.5 are
+// always full; the top of those in column (ci, cj) is
+// nBase = floor((-3.5 - ci - cj) / 3), exact because (-3.5 - ci - cj) / 3
+// is never a whole number. Above it lie at most two cells of the band, then
+// only a monument's corner can reach higher.
+
+float nBaseOf(float ci, float cj) { return floor((-3.5 - ci - cj) / 3.0); }
+
+// A column's top cell, worked out from the rule: up to 2 cone tests and a
+// monument test, against the rule's one cone test per cell queried.
+float columnTopRule(float ci, float cj) {
+    float nb = nBaseOf(ci, cj);
+    float top = nb;
+    for (int k = 1; k < 3; k++) {                       // the band cells, lowest first
+        float n = nb + float(k);
+        vec3 id = vec3(ci + n, cj + n, n);
+        if (id.x + id.y + id.z > 0.5) break;            // above the band
+        if (!coneOn(id)) break;                         // and so every cell above it
+        top = n;
+    }
+    // a monument's corner holds every cell <= its apex T: n <= T - (ci, cj, 0)
+    float m = siteNear(ci);                             // a cell's u = x - z is ci
+    if (siteUsed(m)) {
+        vec3 T = siteApex(m);
+        top = max(top, min(min(T.x - ci, T.y - cj), T.z));
+    }
+    return top;
+}
+
+// A column's top cell, read from the map. The map spans every column on
+// screen plus 5 on each side, and a ray only ever looks up cells within
+// about 3 columns of its own spot, so every lookup lands inside it; self-check
+// 9 compares every lookup the drawing makes with the rule. (A fallback to the
+// rule for off-map columns made the compiled shader bigger and slower.)
+float columnTop(float ci, float cj) {
+    vec2 xy = vec2(ci, cj) - hOrigin;
+#if defined(OMACUBE_MAP_SHIFT)
+    xy.x += 1.0;                        // self-check 9x: the map read one column off
+#endif
+    return nBaseOf(ci, cj) + floor(texture(heights, (xy + 0.5) / hSize).r * 255.0 + 0.5);
+}
+
+#if defined(OMACUBE_DEBUG) && OMACUBE_DEBUG == 9
+bool gMapBad = false;                   // self-check 9: the map disagreed with the rule
+#endif
+
+bool occupied(vec3 id) {
+    float s = id.x + id.y + id.z;
+    if (s < -3.5) return true;          // no lookup for the full layers
+    if (s > 13.5) return false;         // nor above every monument apex (sum 13)
+#if defined(OMACUBE_OLD_FILL)
+    return occupiedRule(id);            // not a down-set: no height map
+#else
+    bool r = id.z <= columnTop(id.x - id.z, id.y - id.z);
+#if defined(OMACUBE_DEBUG) && OMACUBE_DEBUG == 9
+    if (r != occupiedRule(id)) gMapBad = true;
+#endif
+    return r;
+#endif
 }
 
 // A cube is free when the three cells in front of it are empty; in a down-set
@@ -702,6 +785,13 @@ float mapRef(vec3 p) {
 #endif
 
 void main() {
+    // The height map pass: one texel per column, ci = hOrigin.x + x and
+    // cj = hOrigin.y + y, holding top - nBase (0..8) as a byte.
+    if (mapPass > 0.5) {
+        vec2 c = hOrigin + floor(qt_TexCoord0 * hSize);
+        fragColor = vec4((columnTopRule(c.x, c.y) - nBaseOf(c.x, c.y)) / 255.0, 0.0, 0.0, 1.0);
+        return;
+    }
     gId0 = vec3(1e9);                                  // empty ray cache
     gSd = vec3(0.0);
     vec2 uv = (qt_TexCoord0 - 0.5) * vec2(aspect, -1.0) * (2.0 * VIEW);
@@ -945,6 +1035,10 @@ void main() {
         bool ok = nl.x > 0.5 ? (ci == 0.0 || ci == 3.0) : (nl.z > 0.5 && first ? ci == 4.0 : true);
         col = ok ? vec3(0.0, 0.6, 0.0) : bad;
     }
+#elif OMACUBE_DEBUG == 9
+    // every cell the drawing looked up in the height map holds a cube
+    // exactly when the rule says so; green tint marks checked pixels
+    col = gMapBad ? bad : vec3(0.0, 0.6, 0.0) * 0.5 + dim * 0.5;
 #elif OMACUBE_DEBUG == 8
     // the fast two-step drawing finds the same cube, at the same spot, as
     // marching the stack directly with every cube where it really is

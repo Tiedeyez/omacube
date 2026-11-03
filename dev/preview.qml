@@ -46,12 +46,37 @@ ShellRoot {
         exclusionMode: ExclusionMode.Ignore
         mask: Region {}
 
+        // the height map pass, as in Service.qml
+        ShaderEffect {
+            id: heightMap
+            readonly property real halfU: 15 * fx.aspect * 0.47140452
+            readonly property real u0: fx.pan * 0.47140452 - halfU
+            property vector2d hOrigin: Qt.vector2d(Math.floor(u0) - 5, Math.floor((u0 - 15 * 0.81649658) / 2) - 5)
+            property vector2d hSize: Qt.vector2d(Math.ceil(2 * halfU) + 14, Math.ceil(halfU + 15 * 0.81649658) + 14)
+            property real mapPass: 1
+            width: hSize.x; height: hSize.y
+            blending: false
+            fragmentShader: "file://" + Quickshell.env("OMACUBE_QSB")
+            property var mosaic: mosaicData
+            property var heights: mosaicData        // unused in this pass, like these
+            property real time; property real pan; property real aspect; property real texel; property real pixelArt
+            property color c0; property color c1; property color c2; property color c3; property color c4; property color c5
+            property color bodyColor; property color bgColor
+            layer.enabled: true
+            layer.smooth: false
+            layer.textureSize: Qt.size(hSize.x, hSize.y)
+        }
+
         ShaderEffect {
             id: fx
             // grabs render at the window's scale (e.g. 1.25), so size the
             // item in logical units to get exactly w x h pixels
             width: root.w / (win.devicePixelRatio || 1); height: root.h / (win.devicePixelRatio || 1)
             fragmentShader: "file://" + Quickshell.env("OMACUBE_QSB")
+            property var heights: heightMap
+            property vector2d hOrigin: heightMap.hOrigin
+            property vector2d hSize: heightMap.hSize
+            property real mapPass: 0
             // same formulas as Service.qml
             readonly property real clock: root.wrap(root.t0 + root.frame / root.fps, 4189.5)
             property real time: root.wrap(clock, 4189.5) + root.timeOffset
