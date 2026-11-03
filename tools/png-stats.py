@@ -10,6 +10,7 @@ sample a depth edge differently; a missed cube would show across its stickers).
 
   tools/png-stats.py --same a.png b.png [FRACTION]
       fails if more than FRACTION (default 0) of the pixels differ at all
+  tools/png-stats.py --same-mask a.png b.png   (debug mode 10 frames: live mask only)
 
 Prints, per file: pixels, magenta (a failed check), pure blue (a ray that
 left the stack), and the brightest grey level (the most march steps, for
@@ -99,7 +100,27 @@ def same(a_path, b_path, allow):
     return 0 if ok else 1
 
 
+def same_mask(a_path, b_path):
+    # Debug mode 10 paints live pixels pure white over a dimmed cache (at most
+    # 0.3 * 255). Compare only that white/not-white mask: the dim background
+    # comes from each build's own rest pass and may differ in its last bit.
+    wa, ha, ba, ra = read_png(a_path)
+    wb, hb, bb, rb = read_png(b_path)
+    if (wa, ha) != (wb, hb):
+        raise ValueError("frames differ in size")
+    changed = 0
+    for row_a, row_b in zip(ra, rb):
+        for x in range(wa):
+            wa_ = all(row_a[x * ba + k] > 200 for k in range(3))
+            wb_ = all(row_b[x * bb + k] > 200 for k in range(3))
+            changed += wa_ != wb_
+    print(f"{b_path}: {changed} px differ in the live mask -> {'ok' if changed == 0 else 'FAIL'}")
+    return 0 if changed == 0 else 1
+
+
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "--same-mask":
+        return same_mask(sys.argv[2], sys.argv[3])
     if len(sys.argv) in (4, 5) and sys.argv[1] == "--same":
         return same(sys.argv[2], sys.argv[3], float(sys.argv[4]) if len(sys.argv) == 5 else 0.0)
     if len(sys.argv) == 4 and sys.argv[1] == "--diff":

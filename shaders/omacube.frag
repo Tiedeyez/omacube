@@ -821,7 +821,14 @@ void main() {
     }
     gId0 = vec3(1e9);                                  // empty ray cache
     gSd = vec3(0.0);
-    vec2 uv = (qt_TexCoord0 - 0.5) * vec2(aspect, -1.0) * (2.0 * VIEW);
+    // Snap to the pixel centre. The interpolated coordinate can differ in its
+    // last bits between the screen pass and the rest-cache pass (another
+    // target size or scale), and that was enough to flip about 0.2% of pixels
+    // by 1/255 between cached and live on an RTX 4070 SUPER. The snapped
+    // centre is the same number in both passes.
+    vec2 res = vec2(aspect, 1.0) / texel;
+    vec2 tc = (floor(qt_TexCoord0 * res) + 0.5) / res;
+    vec2 uv = (tc - 0.5) * vec2(aspect, -1.0) * (2.0 * VIEW);
 
     // Orthographic camera down the (1,1,1) diagonal. rt, up and fw are
     // orthonormal with rt x up = -fw, so this is a true isometric projection
@@ -891,12 +898,12 @@ void main() {
         }
 #if defined(OMACUBE_DEBUG) && OMACUBE_DEBUG == 10
         // self-check 10 view: the pixels drawn live (white) over the cache (dim)
-        vec3 rc = texture(rest, qt_TexCoord0).rgb;
+        vec3 rc = texture(rest, tc).rgb;
         fragColor = vec4(dyn ? vec3(1.0) : rc * 0.3, 1.0);
         return;
 #endif
         if (!dyn) {
-            fragColor = texture(rest, qt_TexCoord0) * qt_Opacity;
+            fragColor = texture(rest, tc) * qt_Opacity;
             return;
         }
     }

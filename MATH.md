@@ -281,7 +281,9 @@ Typically 1–6% of the pixels are live; with a monument's word on screen while 
 
 The checks:
 
-- Self-check 11 builds the per-pixel test both ways, from the motion map and from the per-cell rule, and finds them identical on every frame.
-- Self-check 10 renders each frame live and with the cache. It finds them identical except for edge pixels beside a moving cube: at most a few hundred pixels at 1600x900 (under 0.1%), mostly off by 1/255, at most about 25/255. At very low resolution, a single pixel on a cube's edge can show the face on the other side of that edge.
+- Self-check 11 builds the per-pixel test both ways, from the motion map and from the per-cell rule, and finds the live mask identical on every frame. (It compares the mask only. The debug view draws the mask over a dimmed copy of the cache, and each debug build renders its own cache, so the dim background may differ in its last bit.)
+- Self-check 10 renders each frame live and with the cache. It finds them identical except for edge pixels beside a moving cube: at most a few hundred pixels at 1600x900 (under 0.1%), mostly off by 1/255, at most about 30/255. At very low resolution, a single pixel on a cube's edge can show the face on the other side of that edge. Most frames are bit-identical, on both the HD 520 and an RTX 4070 SUPER.
+
+**Pixel centres.** The cache pass and the screen pass draw into targets of different size or scale, and the coordinate the GPU interpolates for a pixel can differ in its last bits between them. On the RTX 4070 SUPER at a monitor scale of 1.25 that flipped about 0.2% of cached pixels by 1/255 (and, rarely, an edge pixel by much more). The shader therefore snaps the coordinate to the pixel centre, `(floor(uv * size) + 0.5) / size` with size = (aspect, 1) / texel, before it marches, and reads the cache at that same point. Both passes then compute from the same number.
 
 On the HD 520 at 1600x900, 24 frames a second now take the GPU about 78% busy at about 720 MHz, where the height map alone managed about 9 frames a second at full clock. Copying the cache and nothing else costs about 52% at 390 MHz, about what any full-screen animated background costs there, since the compositor repaints the screen every frame.

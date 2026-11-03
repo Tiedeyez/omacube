@@ -125,15 +125,16 @@ Add any of these to the plugin's own entry in `~/.config/omarchy/shell.json`. Th
 
 ## Performance
 
-Measured on version 0.3.3 as whole-GPU power with the background showing, on an RTX 4070 SUPER at 3440x1440 (the rest cache below lowers the default and pixel-art figures; not yet re-measured):
+Whole-GPU power with the background showing, on an RTX 4070 SUPER at 3440x1440, 24 frames a second (the GPU draws about 6 W with nothing showing):
 
-| Setting | GPU power |
-|---|---|
-| 6K (`renderWidth: 6144`) | about 147 W, GPU at full clock and 76% busy |
-| Your screen's resolution, the default (`renderWidth: 0`) | about 48 W |
-| Pixel art (`pixelSize: 4`) | about 16 W, GPU at idle clocks |
+| Setting | Version 0.3.3 | This version |
+|---|---|---|
+| 6K (`renderWidth: 6144`) | about 147 W, GPU at full clock and 76% busy | about 29 W |
+| Your screen's resolution, the default (`renderWidth: 0`) | about 48 to 54 W | about 23 W |
+| The default at `fps: 60` | about 130 W | about 28 W |
+| Pixel art (`pixelSize: 4`) | about 16 to 18 W | about 14 W, GPU near idle clocks |
 
-- 6K is heavy. It keeps the GPU at full clock while the desktop is visible, and it leaves less GPU for anything else running on it, such as local AI models or games. The default screen resolution looks nearly the same on most screens at a third of the power.
+- 6K still costs more than the default and leaves less GPU for anything else running on it, such as local AI models or games. The default screen resolution looks nearly the same on most screens.
 
 On integrated graphics, an Intel HD 520 (Skylake, 2015) at 1600x900, GPU busy and clock with the background showing:
 

@@ -73,7 +73,7 @@ check_rest() {   # name, then env for both renders
   env "$@" OMACUBE_REST=1 dev/preview.sh "$out/mmap-$name" 1 24 "$t" "$W" "$H" "$out/mask-map.qsb" >/dev/null
   env "$@" OMACUBE_REST=1 dev/preview.sh "$out/mrule-$name" 1 24 "$t" "$W" "$H" "$out/mask-rule.qsb" >/dev/null
   /usr/bin/python3 -I tools/png-stats.py --same "$out/live-$name/f00000.png" "$out/rest-$name/f00000.png" 0.001 || status=1
-  /usr/bin/python3 -I tools/png-stats.py --same "$out/mrule-$name/f00000.png" "$out/mmap-$name/f00000.png" || status=1
+  /usr/bin/python3 -I tools/png-stats.py --same-mask "$out/mrule-$name/f00000.png" "$out/mmap-$name/f00000.png" || status=1
 }
 for t in $times; do check_rest "t$t" OMACUBE_PAN=0; done
 for t in $mono_times; do check_rest "tm$t" OMACUBE_PAN=$mono_pan; done
