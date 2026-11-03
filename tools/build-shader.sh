@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Rebuild shaders/omacube.frag.qsb from shaders/omacube.frag.
+# Rebuild shaders/omacube.frag.qsb from shaders/omacube.frag, and (with no
+# output named) shaders/eggcube.frag.qsb from shaders/eggcube.frag.
 # Needs qsb from qt6-shadertools (Arch: pacman -S qt6-shadertools).
 #   tools/build-shader.sh [output.qsb] [extra qsb args, e.g. -DOMACUBE_DEBUG=1]
 set -euo pipefail
@@ -13,3 +14,7 @@ shift $(( $# > 0 ? 1 : 0 ))
 # ES 1.00 rules, so every variant behaves the same.
 "$QSB" --glsl "100es,300es,120,150" --hlsl 50 --msl 12 "$@" -o "$out" shaders/omacube.frag
 echo "built $out"
+if [ $# -eq 0 ] && [ "$out" = shaders/omacube.frag.qsb ]; then
+  "$QSB" --glsl "100es,300es,120,150" --hlsl 50 --msl 12 -o shaders/eggcube.frag.qsb shaders/eggcube.frag
+  echo "built shaders/eggcube.frag.qsb"
+fi

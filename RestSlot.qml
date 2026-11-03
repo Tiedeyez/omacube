@@ -51,7 +51,7 @@ Item {
     property real mapPass: 1
     property real restPass: 0; property real useRest: 0
     property vector3d restPans; property vector3d restOk; property vector2d strip
-    property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
+    property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg; property vector4d egg; property vector4d eggFx
     property var rest: slot.mosaic; property var rest1: slot.mosaic; property var rest2: slot.mosaic
     property var motion: slot.mosaic
     property var heights: slot.mosaic
@@ -78,7 +78,7 @@ Item {
     property real restPass: 1
     property real useRest: 0
     property vector3d restPans; property vector3d restOk
-    property vector4d wave; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
+    property vector4d wave; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg; property vector4d egg; property vector4d eggFx
     property vector2d strip: Qt.vector2d(slot.stripLo, slot.stripHi)
     property var rest: cache             // its own last contents, kept outside the strip
     property var rest1: slot.mosaic; property var rest2: slot.mosaic

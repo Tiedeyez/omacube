@@ -22,8 +22,10 @@ import "Palette.js" as Palette
 // plus its own mosaic.png, and asks Hyprland whether each window is floating
 // (for pauseUnderWindows); writes nothing, runs no processes and touches no
 // network (DISCLOSURE.md).
-// It sits on the "bottom" layer (above the stock wallpaper, below windows)
-// with an empty input region, so clicks fall through to the desktop.
+// It sits on the "bottom" layer (above the stock wallpaper, below windows).
+// Clicks fall through to the desktop, except on a small square at the centre
+// of the screen: a double-click there starts the easter egg (Egg.qml), which
+// takes the keyboard only while you play.
 Item {
   id: root
 
@@ -52,6 +54,9 @@ Item {
   // cubeSizes: every 2.5 minutes the wall's cubes change size, between
   // 3 x 3 x 3 and 17 x 17 x 17, in a wave. false: always 3 x 3 x 3.
   readonly property bool defaultCubeSizes: true
+  // easterEgg: double-click the cube at the centre of the screen to take it
+  // out of the wall and play with it. false: the background takes no clicks.
+  readonly property bool defaultEasterEgg: true
 
   property var settings: ({})
   function setting(key, fallback, lo, hi) {
@@ -65,6 +70,8 @@ Item {
     ? settings.pauseUnderWindows : defaultPauseUnderWindows
   readonly property bool cubeSizes: typeof settings.cubeSizes === "boolean"
     ? settings.cubeSizes : defaultCubeSizes
+  readonly property bool easterEgg: typeof settings.easterEgg === "boolean"
+    ? settings.easterEgg : defaultEasterEgg
 
   function entryFrom(text) {
     try {
@@ -228,6 +235,55 @@ Item {
   }
   onPauseUnderWindowsChanged: if (pauseUnderWindows) Hyprland.refreshToplevels()
 
+  // ---- the easter egg ---------------------------------------------------------
+  // (MATH.md, "The easter egg") Double-click the cube at the centre of the
+  // screen: it glows yellow, lifts out of the wall, leaving its hole, and
+  // floats to the middle of the screen, starting from the state it was in,
+  // yours to turn (Egg.qml). Esc puts it back.
+  property var egg: null              // {cid, n, stickers, panel, x, y, half}
+  property real eggGlow: 0
+  property bool eggHole: false
+  property bool eggOpen: false
+  // for dev/egg-test.sh: take no keyboard, and a way in without a mouse
+  property bool eggTest: false
+  readonly property alias eggItem: eggLoader.item
+  function debugEgg() {
+    var p = screenWindows.instances[0]
+    if (p) p.eggPick(p.width / 2, p.height / 2)
+  }
+  function startEgg(info) {
+    if (egg) return
+    egg = info
+    eggIntro.restart()
+  }
+  SequentialAnimation {
+    id: eggIntro
+    NumberAnimation { target: root; property: "eggGlow"; from: 0; to: 1; duration: 450; easing.type: Easing.OutCubic }
+    PauseAnimation { duration: 250 }
+    ScriptAction { script: { root.eggHole = true; root.eggOpen = true; root.eggGlow = 0 } }
+  }
+  SequentialAnimation {
+    id: eggOutro
+    ScriptAction { script: { root.eggOpen = false; root.eggHole = false; root.eggGlow = 1 } }
+    NumberAnimation { target: root; property: "eggGlow"; to: 0; duration: 700; easing.type: Easing.InCubic }
+    ScriptAction { script: root.egg = null }
+  }
+  LazyLoader {
+    id: eggLoader
+    active: root.eggOpen && root.egg !== null
+    Egg {
+      test: root.eggTest
+      screen: root.egg.panel.screen
+      n: root.egg.n
+      startStickers: root.egg.stickers
+      colours: root.palette
+      startX: root.egg.x
+      startY: root.egg.y
+      startHalf: root.egg.half
+      onFinished: eggOutro.restart()
+    }
+  }
+
   // ---- one surface per screen ---------------------------------------------
   Variants {
     id: screenWindows
@@ -268,7 +324,106 @@ Item {
       WlrLayershell.namespace: "tiedeyez-omacube"
       WlrLayershell.layer: WlrLayer.Bottom
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-      mask: Region {}
+      // Clicks fall through to the desktop, except on a small square at the
+      // centre while the easter egg is on: a double-click there picks out
+      // the cube under the pointer.
+      mask: Region { item: eggTarget }
+      Item {
+        id: eggTarget
+        anchors.centerIn: parent
+        width: root.easterEgg && !root.egg && !panel.covered ? Math.round(panel.height * 0.2) : 0
+        height: width
+        MouseArea {
+          anchors.fill: parent
+          onDoubleClicked: (m) => panel.eggPick(eggTarget.x + m.x, eggTarget.y + m.y)
+        }
+      }
+      // The pick pass: one ray, through the point picked, and what it hits:
+      // the cube's cell, size and every sticker (omacube.frag, mapPass 3),
+      // read back through a canvas.
+      property var pickGrab: null
+      property vector2d pickAt: Qt.vector2d(0.5, 0.5)
+      function eggPick(px, py) {
+        pickAt = Qt.vector2d((px - canvas.x) / canvas.width, (py - canvas.y) / canvas.height)
+        pickFx.visible = true
+        pickFx.grabToImage(function (r) {
+          pickFx.visible = false
+          panel.pickGrab = r
+          pickImage.source = r.url
+        }, Qt.size(102, 18))
+      }
+      Image {
+        id: pickImage
+        width: 102; height: 18
+        visible: false
+        smooth: false
+        cache: false
+        onStatusChanged: if (status === Image.Ready && panel.pickGrab) pickCanvas.requestPaint()
+      }
+      Canvas {
+        id: pickCanvas
+        width: 102; height: 18
+        renderStrategy: Canvas.Immediate
+        onPaint: {
+          if (!panel.pickGrab) return
+          var ctx = getContext("2d")
+          ctx.drawImage(pickImage, 0, 0)
+          var d = ctx.getImageData(0, 0, 102, 18).data
+          panel.pickGrab = null
+          pickImage.source = ""
+          panel.eggRead(d)
+        }
+      }
+      function eggRead(d) {
+        function px(x, y, c) { return d[(y * 102 + x) * 4 + c] }
+        if (px(2, 0, 2) < 1) return                      // the ray hit nothing
+        var cid = [px(0, 0, 0) * 256 + px(0, 0, 1) - 32768, px(0, 0, 2) * 256 + px(1, 0, 0) - 32768, px(1, 0, 1) * 256 + px(1, 0, 2) - 32768]
+        var n = px(2, 0, 0)
+        if (n < 3 || n > 17) return
+        var st = []
+        for (var i = 0; i < 6 * 17 * 17; i++) st.push(-1)
+        for (var f = 0; f < 6; f++)
+          for (var v = 0; v < n; v++)
+            for (var u = 0; u < n; u++)
+              st[f * 289 + v * 17 + u] = Math.round(px(f * 17 + u, 1 + v, 0) / 32) - 1
+        // where the cube sits on screen: its centre's spot, as the shader's camera
+        var w = [cid[0] * 3, cid[1] * 3, cid[2] * 3]
+        var sx = (w[0] - w[2]) * 0.70710678 - fx.pan
+        var sy = -0.40824829 * w[0] + 0.81649658 * w[1] - 0.40824829 * w[2]
+        var tx = sx / (30 * fx.aspect) + 0.5, ty = 0.5 - sy / 30
+        root.startEgg({ cid: cid, n: n, stickers: st, panel: panel,
+                        x: canvas.x + tx * canvas.width, y: canvas.y + ty * canvas.height,
+                        half: canvas.height * 1.5 / 30 })
+      }
+      readonly property bool eggHere: root.egg !== null && root.egg.panel === panel
+      ShaderEffect {
+        id: pickFx
+        visible: false
+        width: 102; height: 18
+        fragmentShader: fx.fragmentShader
+        property real mapPass: 3
+        property real restPass: 0
+        property real useRest: 0
+        property var heights: heightMap
+        property vector2d hOrigin: heightMap.hOrigin
+        property vector2d hSize: heightMap.hSize
+        property var rest: mosaicData; property var rest1: mosaicData; property var rest2: mosaicData
+        property var motion: motionMap
+        property var mosaic: mosaicData
+        property vector3d restPans; property vector3d restOk; property vector2d strip
+        property real time: fx.time
+        property real pan: fx.pan
+        property real aspect: fx.aspect
+        property real texel: fx.texel
+        property real pixelArt: fx.pixelArt
+        property color c0: fx.c0; property color c1: fx.c1; property color c2: fx.c2
+        property color c3: fx.c3; property color c4: fx.c4; property color c5: fx.c5
+        property color bodyColor: fx.bodyColor; property color bgColor: fx.bgColor
+        property vector4d wave; property vector4d sizes: fx.sizes
+        property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
+        property vector4d egg
+        property vector4d eggFx: Qt.vector4d(0, 0, panel.pickAt.x, panel.pickAt.y)
+      }
 
       // The stack's height map: a first pass, drawn by the same shader,
       // holding the top cube of every cell column on screen, one texel per
@@ -289,6 +444,7 @@ Item {
         property real restPass: 0; property real useRest: 0
         property vector3d restPans; property vector3d restOk; property vector2d strip
         property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
+        property vector4d egg; property vector4d eggFx
         property var rest: mosaicData; property var rest1: mosaicData; property var rest2: mosaicData
         property var motion: mosaicData
         width: hSize.x; height: hSize.y
@@ -316,6 +472,7 @@ Item {
         property real restPass: 0; property real useRest: 0
         property vector3d restPans; property vector3d restOk; property vector2d strip
         property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
+        property vector4d egg; property vector4d eggFx
         property var rest1: mosaicData; property var rest2: mosaicData
         width: hSize.x; height: hSize.y
         blending: false
@@ -506,6 +663,9 @@ Item {
           // the theme wave: its progress, and the theme it is replacing
           property vector4d wave: Qt.vector4d(panel.waveT, panel.waving ? 1 : 0, panel.waving && panel.fromSize !== panel.toSize ? 1 : 0, 0)
           property vector4d sizes: Qt.vector4d(panel.showSize, panel.waving ? panel.fromSize : panel.showSize, 0, 0)
+          // the easter egg's cube: its glow, and its hole once it has left
+          property vector4d egg: panel.eggHere ? Qt.vector4d(root.egg.cid[0], root.egg.cid[1], root.egg.cid[2], 1) : Qt.vector4d(0, 0, 0, 0)
+          property vector4d eggFx: Qt.vector4d(panel.eggHere ? root.eggGlow : 0, panel.eggHere && root.eggHole ? 1 : 0, 0, 0)
           readonly property var old: panel.waving ? panel.fromPalette : panel.showPalette
           property color o0: old.stickers[0]
           property color o1: old.stickers[1]

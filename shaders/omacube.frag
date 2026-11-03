@@ -65,6 +65,8 @@ layout(std140, binding = 0) uniform buf {
     vec4 oBody;
     vec4 oBg;
     vec4 sizes;     // x: cubies along an edge of the wall's cubes (3 .. 17; 0 = 3), y: the old size during a size wave
+    vec4 egg;       // the easter egg (MATH.md, "The easter egg"): xyz its cube's cell, w = 1 while active
+    vec4 eggFx;     // x: its yellow glow 0..1, y: 1 when it has left the wall (a hole), zw: the pick point (mapPass 3)
 };
 // The 20 mosaic states (tools/build-mosaic.py): row k holds cube k's 54
 // sticker colours as index * 32, at x = face * 9 + (u + 1) * 3 + (v + 1).
@@ -701,7 +703,7 @@ float mapScene(vec3 p, out Hit hit) {
         vec3 q = p - id * P;
         if (length(q) - R > d) continue;                // too far to matter
         if (gKnown[i] < 0.5) {
-            gKnown[i] = occupied(id) ? 2.0 : 1.0;
+            gKnown[i] = occupied(id) && !(eggFx.y > 0.5 && id == egg.xyz) ? 2.0 : 1.0;   // the egg's hole
             if (gKnown[i] > 1.5) gCube[i] = cubeState(id);
         }
         if (gKnown[i] < 1.5) continue;
@@ -931,7 +933,7 @@ float mapRef(vec3 p) {
 void main() {
     // The height map pass: one texel per column, ci = hOrigin.x + x and
     // cj = hOrigin.y + y, holding top - nBase (0..8) as a byte.
-    if (mapPass > 0.5) {
+    if (mapPass > 0.5 && mapPass < 2.5) {
         vec2 c = hOrigin + floor(qt_TexCoord0 * hSize);
         if (mapPass < 1.5) {
             fragColor = vec4((columnTopRule(c.x, c.y) - nBaseOf(c.x, c.y)) / 255.0, 0.0, 0.0, 1.0);
@@ -962,6 +964,10 @@ void main() {
     // centre is the same number in both passes.
     vec2 res = vec2(aspect, 1.0) / texel;
     vec2 tc = (floor(qt_TexCoord0 * res) + 0.5) / res;
+    // The pick pass (mapPass 3) follows the one ray through the pick point and
+    // writes what it hits, every texel the same ray: see the end of main().
+    bool picking = mapPass > 2.5;
+    if (picking) tc = eggFx.zw;
     // A cache is drawn a strip per frame; outside the strip it keeps what it
     // holds (rest, here, is the cache itself).
     if (restPass > 0.5 && (tc.x < strip.x || tc.x >= strip.y)) {
@@ -1025,6 +1031,11 @@ void main() {
                 if (texture(motion, (vec2(ci, cj) - hOrigin + 0.5) / hSize).r > 0.5) dyn = true;
 #endif
             }
+        }
+        // the easter egg's cube, its glow and its hole
+        if (egg.w > 0.5) {
+            vec3 ew = egg.xyz * P;
+            if (length(vec2(dot(ew, rt), dot(ew, up)) - sp) < R + 2.0) dyn = true;
         }
         // the word's cubes, at home or anywhere on the way out along +x
         if (mono && abs(fi - (TS.x - TS.z) - 5.5) < 9.0) {
@@ -1127,7 +1138,7 @@ void main() {
                 if (b.x + b.y + b.z < -4.5) break;      // a free cube has an empty cell in front: sum >= -4
                 if (restPass > 0.5 || imod(win - classOf(b), 3.0) > 0.5) continue;
                 Cube cb = cubeState(b);
-                if (cb.lift <= 0.0 || !occupied(b)) continue;
+                if (cb.lift <= 0.0 || !occupied(b) || (eggFx.y > 0.5 && b == egg.xyz)) continue;
                 Hit hy;
                 float ty;
                 if (traceCube(b, cb, vec3(0.0), ro, fw, hy, ty) && ty - cb.lift * 1.7320508 < tBest) {
@@ -1146,7 +1157,7 @@ void main() {
             float fk = float(k);
             float r = 1.0 + floor(fk / 10.0);
             vec3 cid = vec3(TS.x, TS.y - r, TS.z - (fk - 10.0 * (r - 1.0)));
-            float pop = restPass > 0.5 ? 0.0 : wallPop(cid);
+            float pop = restPass > 0.5 || (eggFx.y > 0.5 && cid == egg.xyz) ? 0.0 : wallPop(cid);
             if (pop <= 0.0) continue;
             vec3 cw = cid * P + vec3(pop, 0.0, 0.0);
             if (length(vec2(dot(cw, rt), dot(cw, up)) - sp) > R) continue;
@@ -1167,6 +1178,20 @@ void main() {
         vec3 z = cubeSize(h.cid, h.tex);
         h.n = z.x; h.sc = z.y; h.ph = z.z;
         cubieAt(gridOf(z.x, max(z.y, 1e-3)), h.axis, h.layer, h.ang, h.cell, h.lp);
+    }
+    if (picking) {
+        // header texels: the cube's cell (16 bits a coordinate, offset by
+        // 32768), its size, whether it is a word cube, and whether the ray hit
+        vec2 ix = floor(qt_TexCoord0 * vec2(102.0, 18.0));
+        if (ix.y < 0.5 || !hitAny) {
+            vec3 e = h.cid + 32768.0;
+            vec3 hi = floor(e / 256.0);
+            vec3 lo = e - 256.0 * hi;
+            vec3 o = ix.x < 0.5 ? vec3(hi.x, lo.x, hi.y) : (ix.x < 1.5 ? vec3(lo.y, hi.z, lo.z)
+                   : vec3(h.n, h.tex > -0.5 ? 1.0 : 0.0, hitAny ? 1.0 : 0.0));
+            fragColor = vec4(o / 255.0, 1.0);
+            return;
+        }
     }
 
     // the theme wave at this pixel and at the hit cube's centre
@@ -1191,7 +1216,7 @@ void main() {
         col = bodyNow;
         float hm = 0.5 * (h.n - 1.0);                   // outermost cubie coordinate
         float hk = h.sc * 3.0 / h.n;                    // world units per cubie
-        if (dot(h.cell, nl) > hm - 0.25) {              // outer faces carry stickers
+        if (dot(h.cell, nl) > hm - 0.25 || picking) {   // outer faces carry stickers
             // Rounded-square sticker: half size 0.43, corner radius 0.035,
             // pulled in a little more on sides where this cubie meets the
             // next cube, so every cube reads on its own in a flat run.
@@ -1229,15 +1254,43 @@ void main() {
             // pixel art: a pixel is all sticker or all plastic, theme colours only
             float cover = pixelArt > 0.5 ? step(sd, 0.0) : clamp(0.5 - sd / w, 0.0, 1.0);
             shownCover = cover;
-            if (cover > 0.0) {
+            if (cover > 0.0 || picking) {
                 vec3 c = h.cell, n = nl;
+                if (picking) {
+                    // texel (f * 17 + u, 1 + v): sticker (u, v) of face f
+                    // (+x, -x, +y, -y, +z, -z), in the cube's frame as it is now
+                    vec2 ix = floor(qt_TexCoord0 * vec2(102.0, 18.0));
+                    float f = floor(ix.x / 17.0);
+                    vec2 ab = vec2(ix.x - 17.0 * f, ix.y - 1.0) - hm;
+                    float sg = imod(f, 2.0) < 0.5 ? hm : -hm;
+                    float fa = floor(f * 0.5);
+                    c = fa < 0.5 ? vec3(sg, ab) : (fa < 1.5 ? vec3(ab.x, sg, ab.y) : vec3(ab, sg));
+                    n = setComp(vec3(0.0), fa, sign(sg));
+                }
                 homeOf(h, c, n);
-                vec3 stk = h.tex > -0.5 ? paletteColor(mosaicIndex(h.tex, c, n), showOld) : stickerColor(n, showOld);
+                float ci = h.tex > -0.5 ? mosaicIndex(h.tex, c, n)
+                         : (n.x > 0.5 ? 0.0 : (n.x < -0.5 ? 1.0 : (n.y > 0.5 ? 2.0 : (n.y < -0.5 ? 3.0 : (n.z > 0.5 ? 4.0 : 5.0)))));
+                if (picking) { fragColor = vec4((ci + 1.0) / 8.0, 0.0, 0.0, 1.0); return; }
+                vec3 stk = paletteColor(ci, showOld);
                 // blend in linear light, then back to sRGB
                 vec3 body = pow(bodyNow, vec3(2.2));
                 col = pow(mix(body, pow(stk, vec3(2.2)), cover), vec3(1.0 / 2.2));
             }
         }
+    }
+
+    // The easter egg: its cube glows yellow, inside a yellow halo shaped like
+    // its outline on screen (a hexagon, circumradius 3 sqrt(2/3)).
+    if (egg.w > 0.5 && eggFx.x > 0.0) {
+        vec3 ew = egg.xyz * P;
+        vec2 e = sp - vec2(dot(ew, rt), dot(ew, up));
+        vec2 ep = abs(e.yx);                            // pointy top: iq's hexagon, turned
+        ep -= 2.0 * min(dot(vec2(-0.8660254, 0.5), ep), 0.0) * vec2(-0.8660254, 0.5);
+        ep -= vec2(clamp(ep.x, -0.5773503 * 2.1213203, 0.5773503 * 2.1213203), 2.1213203);
+        float dh = length(ep) * sign(ep.y);
+        vec3 gold = vec3(1.0, 0.82, 0.18);
+        if (hitAny && h.cid == egg.xyz) col = mix(col, gold, 0.35 * eggFx.x);
+        col += gold * eggFx.x * 0.9 * exp(-max(dh, 0.0) / 0.45) * step(0.0, dh);
     }
 
 #if defined(OMACUBE_DEBUG)

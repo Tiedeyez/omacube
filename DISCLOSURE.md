@@ -20,10 +20,11 @@ Nothing. The plugin creates no files, folders, caches or settings.
 | What | How | Why |
 |---|---|---|
 | `shaders/omacube.frag.qsb` (in the plugin folder) | Qt's `ShaderEffect` loads it | The compiled shader that draws the background. It rebuilds byte-for-byte from `shaders/omacube.frag`; see [shaders/PROVENANCE.md](shaders/PROVENANCE.md) for the tool, command and hashes |
+| `shaders/eggcube.frag.qsb` (in the plugin folder) | Qt's `ShaderEffect` loads it, only while you play the easter egg | The floating cube; built from `shaders/eggcube.frag`, see PROVENANCE.md |
 | `mosaic.png` (in the plugin folder) | A hidden Qt `Image`, handed to the shader as a texture | The sticker colours of the 20 cube states that spell OMARCHY |
 | The focused workspace ID, each monitor's active workspace, and whether that workspace has a fullscreen window | Quickshell's built-in `Quickshell.Hyprland` module, from Hyprland's event socket | The sideways slide on a workspace switch, and pausing while a fullscreen window covers the screen |
 | Each workspace's windows, and whether each is floating | Quickshell's `Hyprland.refreshToplevels()`, which asks Hyprland for its client list over its request socket; re-asked 60 ms after a window opens, closes, moves or changes floating mode (Hyprland's raw events, of which only the event name is used) | `pauseUnderWindows`: pausing while tiled windows fill the workspace. Hyprland's client list and events also carry each window's class and title; Quickshell receives them, and the plugin reads only the `floating` flag and the event name |
-| The plugin's own entry in `~/.config/omarchy/shell.json` (the object with `"id": "tiedeyez.omacube"`) | `FileView`, watched for changes; parsed as JSON, and only the keys `renderWidth`, `pixelSize`, `fps` and `pauseUnderWindows` are used, each range-checked | Optional per-machine settings |
+| The plugin's own entry in `~/.config/omarchy/shell.json` (the object with `"id": "tiedeyez.omacube"`) | `FileView`, watched for changes; parsed as JSON, and only the keys `renderWidth`, `pixelSize`, `fps`, `pauseUnderWindows`, `cubeSizes` and `easterEgg` are used, each range-checked | Optional per-machine settings |
 | The list of screens | `Quickshell.screens` | One background surface per screen |
 | `~/.local/state/omarchy/current/theme/colors.toml` | Quickshell's `FileView`, the same way Omarchy's own shell reads it | The sticker and plastic colours. Only `key = "#rrggbb"` lines are used, and only within the first 64 KiB and 512 lines; everything else is ignored |
 | `~/.local/state/omarchy/current/theme.name` | `FileView`, watched for changes; its content is never used | `omarchy theme set` rewrites it after switching themes, which tells the plugin to read `colors.toml` again |
@@ -33,11 +34,15 @@ It does not read your other files, your wallpaper, other environment variables, 
 
 ## What it shows
 
-One layer-shell surface per screen, namespace `tiedeyez-omacube`, on the `bottom` layer: above the stock wallpaper and below windows. It has an empty input region, so it never receives clicks or keyboard focus.
+One layer-shell surface per screen, namespace `tiedeyez-omacube`, on the `bottom` layer: above the stock wallpaper and below windows. It never takes keyboard focus. Its input region is a square at the centre of the screen, a fifth of the screen's height across, so clicks anywhere else fall through to the desktop; a double-click in the square starts the easter egg. With `easterEgg: false` in the settings, or while a window covers the desktop, the region is empty and it receives no clicks at all.
+
+While you play the easter egg, one more surface: namespace `tiedeyez-omacube-egg`, on the `overlay` layer, covering the screen it was started on, with **exclusive keyboard focus**: every key goes to the cube until you press Esc, which closes it. It reads only the keys it uses (the letters R L U D F B M E S X Y Z H, digits, arrows, Space, Backspace, Ctrl+Z and Esc) and the mouse over that screen; nothing is stored, and nothing about it leaves the plugin.
+
+To start the egg from the state the cube is in, the plugin renders one extra 102 x 18 pixel image of it (the same shader, a pick pass) and reads that image back through a hidden Qt `Canvas`. It never reads the screen, other windows or other surfaces.
 
 ## Subprocesses
 
-None. `Service.qml` and `RestSlot.qml` use no `Process`, no `execDetached` and no shell.
+None. `Service.qml`, `RestSlot.qml`, `Egg.qml` and `egg.js` use no `Process`, no `execDetached` and no shell.
 
 ## Network
 
@@ -74,11 +79,11 @@ Tiedeyez, MIT licence (see [LICENSE](LICENSE)).
 
 ```bash
 # the running plugin starts no processes, opens no sockets and writes nothing:
-grep -nE "Process|execDetached|XMLHttpRequest|Socket|saveToFile|setText" Service.qml RestSlot.qml Palette.js
+grep -nE "Process|execDetached|XMLHttpRequest|Socket|saveToFile|setText" Service.qml RestSlot.qml Egg.qml egg.js Palette.js
 # expected: no output
 
 # its only file reads are the two theme files listed above, plus its own mosaic.png:
-grep -nE "FileView|path:|source:|Quickshell.env" Service.qml RestSlot.qml
+grep -nE "FileView|path:|source:|Quickshell.env" Service.qml RestSlot.qml Egg.qml egg.js
 
 # rebuild the shader from source and compare:
 tools/build-shader.sh && git status --short shaders/

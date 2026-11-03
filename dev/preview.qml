@@ -79,7 +79,7 @@ ShellRoot {
             property var motion: mosaicData
             property real restPass: 0; property real useRest: 0
             property vector3d restPans; property vector3d restOk; property vector2d strip
-            property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
+            property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg; property vector4d egg; property vector4d eggFx
             property real time; property real pan; property real aspect; property real texel; property real pixelArt
             property color c0; property color c1; property color c2; property color c3; property color c4; property color c5
             property color bodyColor; property color bgColor
@@ -99,7 +99,7 @@ ShellRoot {
             property real mapPass: 2
             property real restPass: 0; property real useRest: 0
             property vector3d restPans; property vector3d restOk; property vector2d strip
-            property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
+            property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg; property vector4d egg; property vector4d eggFx
             property var rest1: mosaicData; property var rest2: mosaicData
             width: hSize.x; height: hSize.y
             blending: false
@@ -162,6 +162,10 @@ ShellRoot {
             property color o0: old.stickers[0]; property color o1: old.stickers[1]; property color o2: old.stickers[2]
             property color o3: old.stickers[3]; property color o4: old.stickers[4]; property color o5: old.stickers[5]
             property color oBody: old.plastic; property color oBg: old.empty
+            // OMACUBE_EGG="x,y,z,glow,hole": the easter egg's cube glowing, or gone
+            readonly property var eggEnv: (Quickshell.env("OMACUBE_EGG") || "").split(",").map(Number)
+            property vector4d egg: eggEnv.length === 5 ? Qt.vector4d(eggEnv[0], eggEnv[1], eggEnv[2], 1) : Qt.vector4d(0, 0, 0, 0)
+            property vector4d eggFx: eggEnv.length === 5 ? Qt.vector4d(eggEnv[3], eggEnv[4], 0, 0) : Qt.vector4d(0, 0, 0, 0)
             property vector3d restPans: Qt.vector3d(slotA.pan, slotB.pan, slotC.pan)
             property vector2d strip
             property var rest: slotA.cache

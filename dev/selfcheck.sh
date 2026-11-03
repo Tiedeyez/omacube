@@ -143,6 +143,9 @@ for t in ${size_times:-2.37 11.9}; do
     /usr/bin/python3 -I tools/png-stats.py --same "$out/zlive-$t-$w/f00000.png" "$out/zwave-$t-$w/f00000.png" 0.001 || status=1
   done
 done
+# self-check 17: the easter egg's cube logic (egg.js), if node is installed
+echo "== self-check 17"
+if command -v node >/dev/null; then node tools/check-egg.mjs || status=1; else echo "node not found: skipped"; fi
 echo "== self-check 5"
 dev/preview.sh "$out/loop-a" 1 24 2.37 "$W" "$H" >/dev/null
 OMACUBE_TIME_OFFSET=4189.5 dev/preview.sh "$out/loop-t" 1 24 2.37 "$W" "$H" >/dev/null

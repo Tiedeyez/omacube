@@ -10,6 +10,7 @@ Your Omarchy desktop as a 3x3 puzzle cube. Omacube is an animated background: an
 - **The cubes spell Omarchy.** Here and there the corner of a giant solved cube, built from the same cubes, rises out of the pile: white top, red right face, green left face. On its red face, OMARCHY is a sticker mosaic in yellow, the way people build pictures out of real puzzle cubes: every pixel is one sticker, across 20 cubes that are each a legal cube state. Every two minutes those cubes take turns popping out of the wall, scramble, push back in, then pop out again and turn back into the word.
 - **Sharp at any size.** It renders at your screen's resolution with antialiased stickers. 6K supersampling (cleaner edges, much more power) and pixel art (hard pixels in your theme's exact colours, far lighter on the GPU) are each one setting away.
 - **3x3x3 to 17x17x17.** Every 2.5 minutes the whole wall changes cube size, in a wave: each cube shrinks away and grows back bigger or smaller, layer by layer. Bigger cubes turn single slices, so a 17x17x17 shows a plaid of displaced stripes. (Setting `cubeSizes`.)
+- **An easter egg.** Double-click the cube at the centre of your screen. It glows, lifts out of the wall and floats over your desktop, in the state it was in, for you to solve. See [The easter egg](#the-easter-egg).
 - **Workspaces slide the stack.** Every workspace switch slides the field one screen width sideways, with your windows, on the same flick-and-settle curve.
 - **Your theme's colours.** The cubes take their sticker colours from your current Omarchy theme, and when you switch themes a wave sweeps across the screen flipping every sticker over, like a card, to the new colour. For the classic cube colours, pick the Omacube theme in the theme switcher.
 - **Cube-face tiling** (with the Omacube theme). Each workspace is a 3x3 cube face. Windows tile into it like stickers and move by real face turns and layer turns.
@@ -121,9 +122,30 @@ Add any of these to the plugin's own entry in `~/.config/omarchy/shell.json`. Th
 - `pixelSize` (default 0) switches to pixel art when above 0: each art pixel covers that many screen pixels, with hard edges in your theme's exact colours.
 - `fps` (default 24) sets how many times a second the background redraws.
 - `cubeSizes` (default true): every 2.5 minutes the cubes change size, anywhere from 3x3x3 to 17x17x17, in a wave that shrinks them away and grows them back. false keeps them 3x3x3.
+- `easterEgg` (default true): double-clicking the cube at the centre of the screen starts the easter egg. false: the background takes no clicks at all.
 - `pauseUnderWindows` (default true) holds the animation still while tiled windows fill the workspace and only the gaps between them show it. Floating windows don't count. Workspace slides still play.
 
 `omarchy plugin disable` removes the entry, and these settings with it.
+
+## The easter egg
+
+Double-click the cube at the centre of the screen (with no window over it). It glows yellow, lifts out of the wall, leaving its hole, and floats to the middle of the screen at the size and in the exact state it was in, ready to play. It is a real n x n x n cube, whatever size the wall is at.
+
+| | |
+|---|---|
+| Drag a sticker | turns its layer, the way you drag |
+| Drag around the cube | spins it; let go mid-drag to fling it, and it slows down on its own |
+| Scroll | zoom |
+| `R` `L` `U` `D` `F` `B` | turn that face clockwise, as the cube faces you now; with Shift, the other way |
+| `2` to `9`, then a face | a layer that far in from the face (bigger cubes) |
+| `M` `E` `S` | the middle slices (odd sizes) |
+| arrows, `X` `Y` `Z` | turn the whole cube |
+| Space | scramble |
+| Ctrl+Z or Backspace | undo |
+| `H` | show or hide the help |
+| Esc | put it back in the wall |
+
+Solve it and it tells you your moves and time. While you play, it has the keyboard; Esc gives it back.
 
 ## Performance
 
