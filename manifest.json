@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "tiedeyez.omacube",
   "name": "Omacube",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "author": "Tiedeyez",
   "license": "MIT",
   "description": "Your desktop as a 3x3 puzzle cube: an animated background of an endless isometric stack of cubes that turn and tumble with real physics. Here and there a giant solved cube rises out of the pile and spells OMARCHY in a sticker mosaic. Colours follow your Omarchy theme, and workspace switches slide the stack with your windows. An optional companion theme adds classic colours and cube-face tiling. One GPU fragment shader; no processes or network.",

@@ -18,7 +18,8 @@ import "Palette.js" as Palette
 //
 // It reads three small files, the active theme's colors.toml and theme.name
 // and its own entry in ~/.config/omarchy/shell.json (optional settings),
-// plus its own mosaic.png; writes nothing, runs no processes and touches no
+// plus its own mosaic.png, and asks Hyprland whether each window is floating
+// (for pauseUnderWindows); writes nothing, runs no processes and touches no
 // network (DISCLOSURE.md).
 // It sits on the "bottom" layer (above the stock wallpaper, below windows)
 // with an empty input region, so clicks fall through to the desktop.
@@ -94,9 +95,13 @@ Item {
   property bool colorsReady: false     // no crossfade for the first load
 
   function applyColors(text) {
+    var fade = colorsReady
     palette = Palette.fromText(text)
     colorsReady = true
+    if (fade) colorFade.restart()
   }
+  // while the colours crossfade, every pixel is drawn live (see the rest cache)
+  Timer { id: colorFade; interval: 950 }
 
   FileView {
     id: themeColors
@@ -253,6 +258,9 @@ Item {
         property vector2d hOrigin: Qt.vector2d(Math.floor(u0) - 5, Math.floor((u0 - 15 * 0.81649658) / 2) - 5)
         property vector2d hSize: Qt.vector2d(Math.ceil(2 * halfU) + 14, Math.ceil(halfU + 15 * 0.81649658) + 14)
         property real mapPass: 1
+        property real restPass: 0; property real useRest: 0
+        property var rest: mosaicData
+        property var motion: mosaicData
         width: hSize.x; height: hSize.y
         blending: false
         fragmentShader: Qt.resolvedUrl("shaders/omacube.frag.qsb")
@@ -264,6 +272,95 @@ Item {
         layer.enabled: true
         layer.smooth: false
         layer.textureSize: Qt.size(hSize.x, hSize.y)
+      }
+
+      // The motion map: one texel per cell column, as the height map, set where
+      // a cube in that column is mid-burst. Redrawn every frame (it is tiny),
+      // it tells the picture where it must ray-march instead of copying the
+      // rest cache.
+      ShaderEffect {
+        id: motionMap
+        property vector2d hOrigin: heightMap.hOrigin
+        property vector2d hSize: heightMap.hSize
+        property real mapPass: 2
+        property real restPass: 0; property real useRest: 0
+        width: hSize.x; height: hSize.y
+        blending: false
+        fragmentShader: heightMap.fragmentShader
+        property var mosaic: mosaicData
+        property var heights: heightMap
+        property var rest: mosaicData            // unused in this pass, like these
+        property var motion: mosaicData
+        property real time: fx.time
+        property real pan; property real aspect; property real texel; property real pixelArt
+        property color c0; property color c1; property color c2; property color c3; property color c4; property color c5
+        property color bodyColor; property color bgColor
+        layer.enabled: true
+        layer.smooth: false
+        layer.textureSize: Qt.size(hSize.x, hSize.y)
+      }
+
+      // The rest cache: the same picture with every cube at rest, drawn by
+      // the same shader (restPass = 1) into a texture of the canvas's size.
+      // Most of the screen is still at any moment (cubes take turns to move),
+      // so the picture copies those pixels from it and ray-marches only
+      // where a cube is mid-burst or the word is out (MATH.md, "The rest
+      // cache"). It has no clock, so it redraws only when the camera, the
+      // colours or the size change. During a workspace slide, a theme
+      // crossfade, and for a moment after either, every pixel is drawn live.
+      readonly property bool sliding: root.turnPos !== root.turns
+      readonly property bool restStale: sliding || colorFade.running
+      property bool restReady: false
+      function restInvalidate() { restReady = false; restSettle.restart() }
+      onRestStaleChanged: restInvalidate()
+      Timer {
+        id: restSettle
+        interval: 150
+        running: true
+        onTriggered: panel.restReady = !panel.restStale
+      }
+      Connections {
+        target: canvas
+        function onTexWChanged() { panel.restInvalidate() }
+        function onTexHChanged() { panel.restInvalidate() }
+        function onPixelArtChanged() { panel.restInvalidate() }
+      }
+      ShaderEffect {
+        id: restFx
+        width: canvas.width; height: canvas.height
+        blending: false
+        fragmentShader: fx.fragmentShader
+        property var heights: heightMap
+        property vector2d hOrigin: heightMap.hOrigin
+        property vector2d hSize: heightMap.hSize
+        property real mapPass: 0
+        property real restPass: 1
+        property real useRest: 0
+        property var rest: mosaicData
+        property var motion: mosaicData
+        property real time: 0
+        property real pan: 0
+        Binding on pan { value: fx.pan; when: !panel.sliding; restoreMode: Binding.RestoreNone }
+        property real aspect: fx.aspect
+        property var mosaic: mosaicData
+        property real texel: fx.texel
+        property real pixelArt: fx.pixelArt
+        property color c0: root.palette.stickers[0]
+        property color c1: root.palette.stickers[1]
+        property color c2: root.palette.stickers[2]
+        property color c3: root.palette.stickers[3]
+        property color c4: root.palette.stickers[4]
+        property color c5: root.palette.stickers[5]
+        property color bodyColor: root.palette.plastic
+        property color bgColor: root.palette.empty
+      }
+      ShaderEffectSource {
+        id: restCache
+        sourceItem: restFx
+        hideSource: true
+        smooth: false
+        textureSize: Qt.size(canvas.texW, canvas.texH)
+        visible: false
       }
 
       Item {
@@ -296,6 +393,10 @@ Item {
           property vector2d hOrigin: heightMap.hOrigin
           property vector2d hSize: heightMap.hSize
           property real mapPass: 0
+          property real restPass: 0
+          property real useRest: panel.restReady ? 1 : 0
+          property var rest: restCache
+          property var motion: motionMap
           property real time: panel.shownClock % root.cubeLoop
           // one screen width (2 * VIEW * aspect world units) per workspace
           property real pan: root.wrap(root.turnPos * 30 * aspect, root.panPeriod)

@@ -206,7 +206,7 @@ Sliding a cube along the view direction changes nothing about which point of it 
 So the shader doesn't march slid-out cubes at all. It marches the stack with every cube in its cell, turning layers included, using the fast distance bound of section 4. Then it checks the few cubes that can be out right now and cover the pixel. Each candidate:
 
 1. lies in one of the cell columns `(i, j, 0) + n(1, 1, 1)` whose screen point is within R of the pixel;
-2. is in the band where cubes move;
+2. has coordinate sum −4 or more (a free cube has an empty cell in front of it; before 0.4.0 this stopped at −3, so a free cube one layer deeper turned without being drawn slid out);
 3. is of the class whose window it is;
 4. is in a burst (only then is the free test run).
 
@@ -250,3 +250,38 @@ A popped cube must clear the wall around it. Popping 3 brings its back face leve
 
 Drawing a popped cube: the march leaves its cell empty, so the hole shows the giant cube behind it, and `main()` traces the cube at its popped spot. Self-check 8, framed on a monument, compares this with a direct march during the solve, the hold and the scramble: they agree except for a few silhouette pixels.
 
+
+## 19. The height map
+
+Section 3's cone rule says whether a cell holds a cube, but asking it costs up to 20 hashes (a cell's whole down-cone inside the four-layer band), and the march asks for up to eight cells at every step. On integrated graphics that was most of the frame: on an Intel HD 520, 0.3.3 drew 2 frames a second at 1600x900 with the GPU at full clock, and profiling put about three quarters of the frame in those lookups.
+
+The stack is a down-set, so a cube in cell `id` means a cube in `id − (1,1,1)` too. Group the cells into columns along the view axis: column `(ci, cj) = (x − z, y − z)` holds the cells `(ci + n, cj + n, n)`. Down a column, cells hold cubes up to some top cell and are empty above it. One number per column, its top, describes the whole stack.
+
+The cells with coordinate sum below −3.5 are always full; in column `(ci, cj)` the highest of them is `nBase = floor((−3.5 − ci − cj) / 3)`, exact because that fraction is never a whole number. Above it are at most two band cells, then only a monument's corner reaches higher (to `min(T.x − ci, T.y − cj, T.z)` for apex `T`). So the top is `nBase` plus a small whole number (at most 8), which fits in one byte.
+
+A first pass of the same shader (`mapPass = 1`) writes that byte for every column on screen plus 5 on each side, one texel per column: about 60 by 45 texels at 16:9, worked out with the rule itself. It depends only on which columns are on screen, so it is redrawn only while the stack slides. The picture then answers "does this cell hold a cube?" with one texture read: `id.z <= top(id.x − id.z, id.y − id.z)`.
+
+A ray only ever asks about cells within about 3 columns of its own spot, so every lookup lands inside the map. Self-check 9 runs the rule beside the map for every lookup the drawing makes and marks any disagreement: none. Self-check 9x reads the map one column off and fails, as it should. The picture is pixel-identical to 0.3.3 on the same GPU.
+
+On the HD 520 at 1600x900 this took the frame from 2 to about 9 frames a second. (A fallback to the rule for off-map columns made the compiled shader larger and slower, so there is none; the margin makes it unnecessary.)
+
+## 20. The rest cache and the motion map
+
+Cubes take turns: at any moment only the free cubes of one class are mid-burst, and the word moves only a few minutes in every two. So nearly all of the picture is the same from frame to frame. The rest cache draws that unchanging part once and reuses it.
+
+**Where a cube can change the picture.** A cube's every point is within R of its centre, and its centre slides only along the view axis, so on screen a cube stays inside the disc of radius R around its column's spot, whatever it does. A pixel outside every moving cube's disc sees exactly what it would see with every cube at rest. (A moving cube far from the ray can still change the length of a march step, and so the point within EPS of a surface where the march stops. That can shift the anti-aliasing of a sticker edge slightly, or, on a pixel right at a cube's edge, land it on the other side of that edge. It changes no colour otherwise.)
+
+**The cache.** A second pass of the shader (`restPass = 1`) draws the picture with every cube at rest: no bursts, no slides, no pops, the word solved. It has no clock, so it is redrawn only when the camera, the colours or the size change. While the stack slides, while a theme crossfades, and for 150 ms after either, every pixel is drawn live instead.
+
+**The motion map.** Each frame, a third tiny pass (`mapPass = 2`, the height map's layout) sets a texel for each column holding a cube mid-burst. Only a free cube moves, and a free cube has an empty cell in front of it, so its coordinate sum is at least −4: the column's two highest cells with sum at most 0 cover every candidate. It is the same test the slid-out cube drawing uses (section 15), once per column instead of once per pixel.
+
+**Per pixel.** The picture reads the motion map for the columns whose spot is within `R + 1 px` of the pixel, at most nine. If a monument is in frame, it also checks the word's 20 cubes: one within reach, at home or anywhere on its way out along +x, that is popped out or not solved into the word, makes the pixel live. A live pixel is drawn exactly as before. Any other pixel is copied from the cache.
+
+Typically 1–6% of the pixels are live; with a monument's word on screen while it scrambles, up to about 20%.
+
+The checks:
+
+- Self-check 11 builds the per-pixel test both ways, from the motion map and from the per-cell rule, and finds them identical on every frame.
+- Self-check 10 renders each frame live and with the cache. It finds them identical except for edge pixels beside a moving cube: at most a few hundred pixels at 1600x900 (under 0.1%), mostly off by 1/255, at most about 25/255. At very low resolution, a single pixel on a cube's edge can show the face on the other side of that edge.
+
+On the HD 520 at 1600x900, 24 frames a second now take the GPU about 78% busy at about 720 MHz, where the height map alone managed about 9 frames a second at full clock. Copying the cache and nothing else costs about 52% at 390 MHz, about what any full-screen animated background costs there, since the compositor repaints the screen every frame.

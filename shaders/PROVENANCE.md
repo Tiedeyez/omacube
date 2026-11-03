@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| Source | `shaders/omacube.frag`, SHA-256 `5e552e52f341cbcfb76a89e2f08909c8f9fd70d8d4b609954e71e4f904d61ee5` |
-| Source and artifact last changed in | commit `a2563fe` (0.3.0); unchanged since |
+| Source | `shaders/omacube.frag`, SHA-256 `2e77ce2826278b02988b5cee74e677acf2ea2a1bda360ecefcb08de942e9acbe` |
+| Source and artifact last changed in | 0.4.0 (height map, rest cache, motion map) |
 | Tool | `/usr/lib/qt6/bin/qsb` 6.12.0, from Arch `qt6-shadertools 6.12.0-1` |
 | Command | `qsb --glsl "100es,300es,120,150" --hlsl 50 --msl 12 -o shaders/omacube.frag.qsb shaders/omacube.frag` |
-| Output | `shaders/omacube.frag.qsb`, SHA-256 `9ff9d92945de65b020c9e7c22426db6c7ca188a71c2bbf862e9da19399154efe` |
+| Output | `shaders/omacube.frag.qsb`, SHA-256 `424d480566d7189c45a8f0fa11a205e5145baa38c34c75f1dd37793114806f93` |
 
 ## Check it yourself
 

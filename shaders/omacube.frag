@@ -48,7 +48,9 @@ layout(std140, binding = 0) uniform buf {
     vec4 bgColor;   // anything a ray misses
     vec2 hOrigin;   // the height map's first column (ci, cj)
     vec2 hSize;     // the height map's size in columns
-    float mapPass;  // 1: draw the height map instead of the picture
+    float mapPass;  // 1: draw the height map, 2: the motion map, instead of the picture
+    float restPass; // 1: draw the stack at rest (no bursts, no pops) for the rest cache
+    float useRest;  // 1: pixels nothing moves near are copied from the rest cache
 };
 // The 20 mosaic states (tools/build-mosaic.py): row k holds cube k's 54
 // sticker colours as index * 32, at x = face * 9 + (u + 1) * 3 + (v + 1).
@@ -57,6 +59,14 @@ layout(binding = 1) uniform sampler2D mosaic;
 // above the always-full layers hold a cube (MATH.md, "The height map").
 // This shader draws it too, in a tiny pass of its own (mapPass = 1).
 layout(binding = 2) uniform sampler2D heights;
+// The rest cache: the same picture with every cube at rest, drawn by this
+// shader (restPass = 1) only when the camera or the colours change. A pixel
+// no moving cube can reach is copied from it (MATH.md, "The rest cache").
+layout(binding = 3) uniform sampler2D rest;
+// The motion map: for each cell column, 1 if a cube in it is mid-burst now.
+// Same layout as the height map; this shader draws it every frame, in a
+// tiny pass of its own (mapPass = 2).
+layout(binding = 4) uniform sampler2D motion;
 
 const float HALF_PI = 1.5707963;
 const float P = 3.0;          // lattice pitch: neighbouring cubes touch
@@ -469,11 +479,11 @@ Cube cubeState(vec3 cid) {
         float col = T.z - cid.z;
         if (cid.x == T.x && r > 0.5 && r < 2.5 && col > -0.5 && col < 9.5) {
             c.tex = (r - 1.0) * 10.0 + col;
-            wallState(cid, c);
+            if (restPass < 0.5) wallState(cid, c);
         }
     } else {
         c.nb = baseLen(key);
-        ordinaryState(cid, key, c);        // tests freeAt() only mid-burst
+        if (restPass < 0.5) ordinaryState(cid, key, c);  // tests freeAt() only mid-burst
     }
 #if defined(OMACUBE_STATIC)
     c.lift = 0.0;                        // self-check 6: nothing turns, slides or pops
@@ -789,7 +799,24 @@ void main() {
     // cj = hOrigin.y + y, holding top - nBase (0..8) as a byte.
     if (mapPass > 0.5) {
         vec2 c = hOrigin + floor(qt_TexCoord0 * hSize);
-        fragColor = vec4((columnTopRule(c.x, c.y) - nBaseOf(c.x, c.y)) / 255.0, 0.0, 0.0, 1.0);
+        if (mapPass < 1.5) {
+            fragColor = vec4((columnTopRule(c.x, c.y) - nBaseOf(c.x, c.y)) / 255.0, 0.0, 0.0, 1.0);
+            return;
+        }
+        // the motion map: the column's band cells, only those of the class
+        // whose window it is can be mid-burst
+        float w = floor(time / WIN);
+        float nTop = floor(-(c.x + c.y) / 3.0);
+        float moving = 0.0;
+        for (int k = 0; k < 2; k++) {
+            float n = nTop - float(k);
+            vec3 b = vec3(c.x + n, c.y + n, n);
+            if (b.x + b.y + b.z < -4.5) break;
+            if (imod(w - classOf(b), 3.0) > 0.5) continue;
+            Cube cb = cubeState(b);
+            if (cb.lift > 0.0 && occupied(b)) moving = 1.0;
+        }
+        fragColor = vec4(moving, 0.0, 0.0, 1.0);
         return;
     }
     gId0 = vec3(1e9);                                  // empty ray cache
@@ -816,6 +843,64 @@ void main() {
     float mS = siteNear(fi);
     bool mono = siteUsed(mS);
     vec3 TS = siteApex(mS);
+    float fj = (sp.y * 0.81649658 + fi) * 0.5;          // sqrt(6) / 3
+    float win = floor(time / WIN);
+
+    // The rest cache. A cube changes the picture only inside its own outline
+    // on screen, within R of its column's spot, whether it slides, turns or
+    // not; anything else it does to a ray far from it is the length of a
+    // march step. So where no cube within R is mid-burst and no word cube is
+    // near, the picture is the stack at rest, already drawn.
+    if (useRest > 0.5 && restPass < 0.5) {
+        bool dyn = false;
+        for (int di = -1; di <= 1; di++) {
+            for (int dj = -1; dj <= 1; dj++) {
+                float ci = floor(fi + 0.5) + float(di);
+                float cj = floor(fj + 0.5) + float(dj);
+                vec2 cp = vec2(ci * 2.1213203, (2.0 * cj - ci) * 1.2247449);
+                if (length(cp - sp) > R + px) continue;
+#if defined(OMACUBE_MOTION_RULE)
+                // self-check 11: the same test worked out cell by cell
+                float nTop = floor(-(ci + cj) / 3.0);
+                for (int k = 0; k < 2; k++) {
+                    float n = nTop - float(k);
+                    vec3 b = vec3(ci + n, cj + n, n);
+                    if (b.x + b.y + b.z < -4.5) break;
+                    if (imod(win - classOf(b), 3.0) > 0.5) continue;
+                    Cube cb = cubeState(b);
+                    if (cb.lift > 0.0 && occupied(b)) dyn = true;
+                }
+#else
+                if (texture(motion, (vec2(ci, cj) - hOrigin + 0.5) / hSize).r > 0.5) dyn = true;
+#endif
+            }
+        }
+        // the word's cubes, at home or anywhere on the way out along +x
+        if (mono && abs(fi - (TS.x - TS.z) - 5.5) < 9.0) {
+            vec2 po = vec2(0.70710678, -0.40824829) * POP;   // (POP, 0, 0) on screen
+            for (int k = 0; k < 20; k++) {
+                float fk = float(k);
+                float r = 1.0 + floor(fk / 10.0);
+                vec3 cw = vec3(TS.x, TS.y - r, TS.z - (fk - 10.0 * (r - 1.0))) * P;
+                vec2 a = sp - vec2(dot(cw, rt), dot(cw, up));
+                if (length(a - po * clamp(dot(a, po) / dot(po, po), 0.0, 1.0)) > R + px) continue;
+                // the cache shows it solved into the word, in its wall
+                Cube cb = cubeState(cw / P);
+                if (cb.pop > 0.0 || cb.nb > 0.5) dyn = true;
+            }
+        }
+#if defined(OMACUBE_DEBUG) && OMACUBE_DEBUG == 10
+        // self-check 10 view: the pixels drawn live (white) over the cache (dim)
+        vec3 rc = texture(rest, qt_TexCoord0).rgb;
+        fragColor = vec4(dyn ? vec3(1.0) : rc * 0.3, 1.0);
+        return;
+#endif
+        if (!dyn) {
+            fragColor = texture(rest, qt_TexCoord0) * qt_Opacity;
+            return;
+        }
+    }
+
     float tStart = 0.0;
     if (mono) {
         vec3 te3 = (ro - TS * P - 1.5) * 1.7320508;
@@ -856,8 +941,6 @@ void main() {
     // reaches no farther than R from its centre's column on screen. Columns
     // are the lines (i, j, 0) + n (1, 1, 1); each projects to one point.
     float tBest = hitAny ? t - h.lift * 1.7320508 : 1e9;
-    float fj = (sp.y * 0.81649658 + fi) * 0.5;          // sqrt(6) / 3
-    float win = floor(time / WIN);
     for (int di = -1; di <= 1; di++) {
         for (int dj = -1; dj <= 1; dj++) {
             float ci = floor(fi + 0.5) + float(di);
@@ -868,9 +951,9 @@ void main() {
             for (int k = 0; k < 2; k++) {
                 float n = nTop - float(k);
                 vec3 b = vec3(ci + n, cj + n, n);
-                if (b.x + b.y + b.z < -3.5) break;      // below the band nothing moves
+                if (b.x + b.y + b.z < -4.5) break;      // a free cube has an empty cell in front: sum >= -4
                 if (hitAny && b == h.cid) continue;     // the march's own cube: done above
-                if (imod(win - classOf(b), 3.0) > 0.5) continue;
+                if (restPass > 0.5 || imod(win - classOf(b), 3.0) > 0.5) continue;
                 Cube cb = cubeState(b);
                 if (cb.lift <= 0.0 || !occupied(b)) continue;
                 Hit hy;
@@ -891,7 +974,7 @@ void main() {
             float fk = float(k);
             float r = 1.0 + floor(fk / 10.0);
             vec3 cid = vec3(TS.x, TS.y - r, TS.z - (fk - 10.0 * (r - 1.0)));
-            float pop = wallPop(cid);
+            float pop = restPass > 0.5 ? 0.0 : wallPop(cid);
             if (pop <= 0.0) continue;
             vec3 cw = cid * P + vec3(pop, 0.0, 0.0);
             if (length(vec2(dot(cw, rt), dot(cw, up)) - sp) > R) continue;

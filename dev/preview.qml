@@ -59,12 +59,69 @@ ShellRoot {
             fragmentShader: "file://" + Quickshell.env("OMACUBE_QSB")
             property var mosaic: mosaicData
             property var heights: mosaicData        // unused in this pass, like these
+            property var rest: mosaicData
+            property var motion: mosaicData
+            property real restPass: 0; property real useRest: 0
             property real time; property real pan; property real aspect; property real texel; property real pixelArt
             property color c0; property color c1; property color c2; property color c3; property color c4; property color c5
             property color bodyColor; property color bgColor
             layer.enabled: true
             layer.smooth: false
             layer.textureSize: Qt.size(hSize.x, hSize.y)
+        }
+
+        // The motion map: one texel per cell column, as the height map, set where
+        // a cube in that column is mid-burst. Redrawn every frame (it is tiny),
+        // it tells the picture where it must ray-march instead of copying the
+        // rest cache.
+        ShaderEffect {
+            id: motionMap
+            property vector2d hOrigin: heightMap.hOrigin
+            property vector2d hSize: heightMap.hSize
+            property real mapPass: 2
+            property real restPass: 0; property real useRest: 0
+            width: hSize.x; height: hSize.y
+            blending: false
+            fragmentShader: heightMap.fragmentShader
+            property var mosaic: mosaicData
+            property var heights: heightMap
+            property var rest: mosaicData                // unused in this pass, like these
+            property var motion: mosaicData
+            property real time: fx.time
+            property real pan; property real aspect; property real texel; property real pixelArt
+            property color c0; property color c1; property color c2; property color c3; property color c4; property color c5
+            property color bodyColor; property color bgColor
+            layer.enabled: true
+            layer.smooth: false
+            layer.textureSize: Qt.size(hSize.x, hSize.y)
+        }
+
+        // the rest cache pass, as in Service.qml: every cube at rest
+        ShaderEffect {
+            id: restFx
+            width: fx.width; height: fx.height
+            blending: false
+            fragmentShader: fx.fragmentShader
+            property var heights: heightMap
+            property vector2d hOrigin: heightMap.hOrigin
+            property vector2d hSize: heightMap.hSize
+            property real mapPass: 0
+            property real restPass: 1
+            property real useRest: 0
+            property var rest: mosaicData
+            property var motion: mosaicData
+            property real time: 0             // the rest pass has no clock
+            property real pan: fx.pan
+            property real aspect: fx.aspect
+            property var mosaic: mosaicData
+            property real texel: fx.texel
+            property real pixelArt: fx.pixelArt
+            property color c0: fx.c0; property color c1: fx.c1; property color c2: fx.c2
+            property color c3: fx.c3; property color c4: fx.c4; property color c5: fx.c5
+            property color bodyColor: fx.bodyColor; property color bgColor: fx.bgColor
+            layer.enabled: true
+            layer.smooth: false
+            layer.textureSize: Qt.size(root.w, root.h)
         }
 
         ShaderEffect {
@@ -77,6 +134,11 @@ ShellRoot {
             property vector2d hOrigin: heightMap.hOrigin
             property vector2d hSize: heightMap.hSize
             property real mapPass: 0
+            property real restPass: 0
+            // OMACUBE_REST=1: copy pixels nothing moves near from the rest cache
+            property real useRest: Quickshell.env("OMACUBE_REST") === "1" ? 1 : 0
+            property var rest: restFx
+            property var motion: motionMap
             // same formulas as Service.qml
             readonly property real clock: root.wrap(root.t0 + root.frame / root.fps, 4189.5)
             property real time: root.wrap(clock, 4189.5) + root.timeOffset

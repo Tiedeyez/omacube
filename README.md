@@ -108,17 +108,24 @@ omacube_plastic = "#0b0b0d"
 
 ## Settings
 
-At the top of `Service.qml`:
+Add any of these to the plugin's own entry in `~/.config/omarchy/shell.json`. The file is watched, so a change applies at once:
+
+```json
+"plugins": [
+  { "id": "tiedeyez.omacube", "pixelSize": 3, "fps": 20 }
+]
+```
 
 - `renderWidth` (default 0) sets how many pixels across the background renders before it is scaled to your screen. 0 renders at your screen's own resolution; 6144 renders at 6K for cleaner edges, at about three times the power.
 - `pixelSize` (default 0) switches to pixel art when above 0: each art pixel covers that many screen pixels, with hard edges in your theme's exact colours.
 - `fps` (default 24) sets how many times a second the background redraws.
+- `pauseUnderWindows` (default true) holds the animation still while tiled windows fill the workspace and only the gaps between them show it. Floating windows don't count. Workspace slides still play.
 
-After editing `Service.qml`, run `omarchy restart shell`.
+`omarchy plugin disable` removes the entry, and these settings with it.
 
 ## Performance
 
-Measured as whole-GPU power with the background showing, on an RTX 4070 SUPER at 3440x1440:
+Measured on version 0.3.3 as whole-GPU power with the background showing, on an RTX 4070 SUPER at 3440x1440 (the rest cache below lowers the default and pixel-art figures; not yet re-measured):
 
 | Setting | GPU power |
 |---|---|
@@ -127,8 +134,21 @@ Measured as whole-GPU power with the background showing, on an RTX 4070 SUPER at
 | Pixel art (`pixelSize: 4`) | about 16 W, GPU at idle clocks |
 
 - 6K is heavy. It keeps the GPU at full clock while the desktop is visible, and it leaves less GPU for anything else running on it, such as local AI models or games. The default screen resolution looks nearly the same on most screens at a third of the power.
-- It stops redrawing while a fullscreen window covers the screen.
-- Any animated wallpaper makes the compositor repaint the screen on every frame. On integrated graphics, use pixel art.
+
+On integrated graphics, an Intel HD 520 (Skylake, 2015) at 1600x900, GPU busy and clock with the background showing:
+
+| Setting | Frames per second | GPU |
+|---|---|---|
+| Version 0.3.3, the default | 2 | 99% at full clock (950 MHz) |
+| The default (`renderWidth: 0`, 24 fps) | 24 | 78% at about 720 MHz |
+| Pixel art (`pixelSize: 3`) | 24 | 63% at about 445 MHz |
+| Pixel art (`pixelSize: 3`, `fps: 15`) | 15 | 59% at about 390 MHz |
+| Any full-screen animation, for comparison | | about 50% at about 390 MHz |
+
+Two things made the difference: a height map of the stack, and a cache of the picture at rest, so only the few cubes moving at any moment are drawn fresh ([MATH.md](MATH.md), sections 19 and 20).
+
+- It stops redrawing while a fullscreen window covers the screen, or tiled windows fill it.
+- Any animated wallpaper makes the compositor repaint the screen on every frame. On integrated graphics, pixel art at 15–20 fps is lightest.
 - The animation loops seamlessly every 70 minutes, and the workspace slide wraps without a jump.
 
 ## How it's checked
@@ -138,12 +158,12 @@ Measured as whole-GPU power with the background showing, on an RTX 4070 SUPER at
 - `python3 tools/check-math.py` re-derives every claim about the background in plain Python, using brute force where the shader takes shortcuts.
 - `lua tools/check-cubeface.lua` checks the tiling. It covers every turn, all 511 window arrangements on three screen sizes, the geometry of a face turn, and the whole group of reachable arrangements.
 - `node tools/check-palette.mjs` runs the plugin's own `Palette.js` against every installed theme.
-- `dev/selfcheck.sh` builds debug versions of the shader and renders them on your GPU. Each check paints failing pixels magenta, then counts them. One compares the fast way of drawing slid-out cubes with marching them directly. It needs a running Wayland session with Quickshell.
+- `dev/selfcheck.sh` builds debug versions of the shader and renders them on your GPU. Each check paints failing pixels magenta, then counts them. One compares the fast way of drawing slid-out cubes with marching them directly; others compare the height map with the occupancy rule, and frames drawn with the rest cache with frames drawn wholly live. It needs a running Wayland session with Quickshell. On integrated graphics, run it small (`SELFCHECK_W=320 SELFCHECK_H=180`): the debug builds are heavy enough to trip the GPU's hang timeout at full size.
 
 ## Development
 
 - `shaders/omacube.frag` is the shader source. `shaders/omacube.frag.qsb` is the compiled form Qt loads. Rebuild it with `tools/build-shader.sh` (needs `qt6-shadertools`).
-- `dev/preview.sh [outdir] [frames] [fps] [t0] [width] [height] [qsb]` renders PNG frames without installing the plugin. Set `OMACUBE_THEME=/path/to/colors.toml` for a theme's colours, `OMACUBE_PIXEL=1` for pixel art (render at the art-pixel size, then upscale with nearest neighbour), and `OMACUBE_PAN=<units>` to move the camera sideways.
+- `dev/preview.sh [outdir] [frames] [fps] [t0] [width] [height] [qsb]` renders PNG frames without installing the plugin. Set `OMACUBE_THEME=/path/to/colors.toml` for a theme's colours, `OMACUBE_PIXEL=1` for pixel art (render at the art-pixel size, then upscale with nearest neighbour), `OMACUBE_PAN=<units>` to move the camera sideways, and `OMACUBE_REST=1` to copy still pixels from the rest cache as the plugin does (the default draws every pixel live).
 - `tools/build-mosaic.py` rebuilds `mosaic.png`, the 20 cube states that spell the word, and prints the word as their stickers show it.
 - `dev/sticker-window.sh <n> [hex]` opens a demo window that looks like a cube sticker, for trying out the tiling.
 

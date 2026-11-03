@@ -8,6 +8,9 @@
 8 uses 1e-5: a pixel or two on silhouettes where the two ways of drawing
 sample a depth edge differently; a missed cube would show across its stickers).
 
+  tools/png-stats.py --same a.png b.png [FRACTION]
+      fails if more than FRACTION (default 0) of the pixels differ at all
+
 Prints, per file: pixels, magenta (a failed check), pure blue (a ray that
 left the stack), and the brightest grey level (the most march steps, for
 self-check 3: steps = grey / 255 * 256).
@@ -78,7 +81,27 @@ def diff(a_path, b_path):
     return total / (3 * n), changed / n
 
 
+def same(a_path, b_path, allow):
+    wa, ha, ba, ra = read_png(a_path)
+    wb, hb, bb, rb = read_png(b_path)
+    if (wa, ha) != (wb, hb):
+        raise ValueError("frames differ in size")
+    changed = worst = 0
+    for row_a, row_b in zip(ra, rb):
+        for x in range(wa):
+            d = max(abs(row_a[x * ba + k] - row_b[x * bb + k]) for k in range(3))
+            changed += d > 0
+            worst = max(worst, d)
+    frac = changed / (wa * ha)
+    ok = frac <= allow
+    print(f"{b_path}: {changed} px differ ({100.0 * frac:.4f}%), largest {worst}/255"
+          f" -> {'ok' if ok else 'FAIL'}")
+    return 0 if ok else 1
+
+
 def main():
+    if len(sys.argv) in (4, 5) and sys.argv[1] == "--same":
+        return same(sys.argv[2], sys.argv[3], float(sys.argv[4]) if len(sys.argv) == 5 else 0.0)
     if len(sys.argv) == 4 and sys.argv[1] == "--diff":
         diff(sys.argv[2], sys.argv[3])
         return 0
@@ -102,7 +125,8 @@ def main():
                     grey_max = max(grey_max, r)
                     grey_sum += r
                     grey_n += 1
-        total_bad += magenta if magenta > allow * w * h else 0
+        # a nonzero allowance is at least one pixel, whatever the frame size
+        total_bad += magenta if magenta > max(allow * w * h, 1 if allow > 0 else 0) else 0
         mean = grey_sum / grey_n if grey_n else 0.0
         print(f"{path}: {w * h} px, magenta {magenta}, blue {blue}, "
               f"max grey {grey_max}, mean grey {mean:.1f}")
