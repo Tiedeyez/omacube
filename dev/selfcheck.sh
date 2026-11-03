@@ -95,6 +95,19 @@ for t in ${slide_times:-2.37 46080.7}; do
   check_slide "p$t" 0.3 0,1 OMACUBE_PAN=0 OMACUBE_PIXEL=1
 done
 for t in ${mono_slide_times:-101.6}; do check_slide "m$t" 0.6 1,0 OMACUBE_PAN=$mono_pan; done
+# self-check 13: the theme wave mid-sweep, drawn live and from two caches
+# (this workspace in the old theme and in the new), matches.
+echo "== self-check 13"
+old_theme=${SELFCHECK_OLD_THEME:-/usr/share/omarchy/themes/tokyo-night/colors.toml}
+for t in ${wave_times:-2.37 101.6}; do
+  pan=0; [ "$t" = 101.6 ] && pan=$mono_pan
+  for w in 0.3 0.6; do
+    OMACUBE_PAN=$pan OMACUBE_OLD_THEME=$old_theme OMACUBE_WAVE=$w dev/preview.sh "$out/wlive-$t-$w" 1 24 "$t" "$W" "$H" "$out/plain.qsb" >/dev/null
+    OMACUBE_PAN=$pan OMACUBE_OLD_THEME=$old_theme OMACUBE_WAVE=$w OMACUBE_REST=1 OMACUBE_REST_TURNS=0 OMACUBE_REST_OLD_TURNS=0 \
+      dev/preview.sh "$out/wave-$t-$w" 1 24 "$t" "$W" "$H" "$out/plain.qsb" >/dev/null
+    /usr/bin/python3 -I tools/png-stats.py --same "$out/wlive-$t-$w/f00000.png" "$out/wave-$t-$w/f00000.png" 0.001 || status=1
+  done
+done
 echo "== self-check 5"
 dev/preview.sh "$out/loop-a" 1 24 2.37 "$W" "$H" >/dev/null
 OMACUBE_TIME_OFFSET=4189.5 dev/preview.sh "$out/loop-t" 1 24 2.37 "$W" "$H" >/dev/null

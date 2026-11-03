@@ -54,6 +54,15 @@ layout(std140, binding = 0) uniform buf {
     vec3 restPans;  // the pan each of the three rest caches was drawn at
     vec3 restOk;    // 1 where that cache is drawn and current
     vec2 strip;     // rest pass: draw x in [strip.x, strip.y), copy the rest of the cache
+    vec4 wave;      // theme change: x = progress 0..1, y = 1 while it runs
+    vec4 o0;        // the previous theme's colours, as c0 .. bgColor, while the wave runs
+    vec4 o1;
+    vec4 o2;
+    vec4 o3;
+    vec4 o4;
+    vec4 o5;
+    vec4 oBody;
+    vec4 oBg;
 };
 // The 20 mosaic states (tools/build-mosaic.py): row k holds cube k's 54
 // sticker colours as index * 32, at x = face * 9 + (u + 1) * 3 + (v + 1).
@@ -81,6 +90,12 @@ const float H = 0.5;          // cubie half size, so a cube spans -1.5 .. 1.5
 const float R = 2.5980762;    // a cube's circumradius, 1.5 * sqrt(3)
 const float VIEW = 15.0;      // half the screen height, world units
 const float PAN_PERIOD = 13033.3921908;  // 3072 * 3 sqrt 2: the slide wraps here
+// The theme wave (MATH.md, "The theme wave"): a front sweeps the screen
+// along WAVE_DIR; each sticker flips over like a card as it passes, showing
+// the new theme's colour on its back. A sticker's flip runs over WAVE_B
+// world units of the front's travel.
+const vec2 WAVE_DIR = vec2(0.89442719, -0.44721360);   // rightwards and down, unit
+const float WAVE_B = 7.5;
 const float FILL = 0.92;      // chance a cell in the top four layers is switched on
 const float SLOT = 0.95;      // seconds per move slot at speed 8/8
 const float TURN = 0.6;       // fraction of a move's time spent turning
@@ -714,13 +729,37 @@ float mapSceneSlid(vec3 p, out Hit hit) {
 
 // ---- colour ------------------------------------------------------------------------
 
-vec3 paletteColor(float i) {
+// Sticker colour i of the current theme, or, old = true, of the one the
+// theme wave is replacing.
+vec3 paletteColor(float i, bool old) {
+    if (old) {
+        if (i < 0.5) return o0.rgb;
+        if (i < 1.5) return o1.rgb;
+        if (i < 2.5) return o2.rgb;
+        if (i < 3.5) return o3.rgb;
+        if (i < 4.5) return o4.rgb;
+        return o5.rgb;
+    }
     if (i < 0.5) return c0.rgb;
     if (i < 1.5) return c1.rgb;
     if (i < 2.5) return c2.rgb;
     if (i < 3.5) return c3.rgb;
     if (i < 4.5) return c4.rgb;
     return c5.rgb;
+}
+
+// The wave front's position along WAVE_DIR, in world units from the
+// screen's centre: it starts a flip band plus a cube beyond one corner and
+// ends a cube beyond the opposite one.
+float waveFront() {
+    float S = VIEW * (aspect * abs(WAVE_DIR.x) + abs(WAVE_DIR.y));
+    return mix(-S - WAVE_B - R, S + R, wave.x);
+}
+// How far through its flip a sticker centred at screen spot s is: 0 not
+// started, 1 done (also when no wave runs).
+float wavePhase(vec2 s) {
+    if (wave.y < 0.5) return 1.0;
+    return clamp((waveFront() - dot(s, WAVE_DIR)) / WAVE_B, 0.0, 1.0);
 }
 
 // The colour index mosaic state k has at sticker slot (c, n).
@@ -731,13 +770,9 @@ float mosaicIndex(float k, vec3 c, vec3 n) {
     return floor(texture(mosaic, vec2((x + 0.5) / 64.0, (k + 0.5) / 32.0)).r * (255.0 / 32.0) + 0.5);
 }
 
-vec3 stickerColor(vec3 n) {
-    if (n.x > 0.5) return c0.rgb;
-    if (n.x < -0.5) return c1.rgb;
-    if (n.y > 0.5) return c2.rgb;
-    if (n.y < -0.5) return c3.rgb;
-    if (n.z > 0.5) return c4.rgb;
-    return c5.rgb;
+vec3 stickerColor(vec3 n, bool old) {
+    float i = n.x > 0.5 ? 0.0 : (n.x < -0.5 ? 1.0 : (n.y > 0.5 ? 2.0 : (n.y < -0.5 ? 3.0 : (n.z > 0.5 ? 4.0 : 5.0))));
+    return paletteColor(i, old);
 }
 
 // Undo one quarter turn if the cubie at c is part of it.
@@ -916,7 +951,17 @@ void main() {
         fragColor = vec4(dyn ? vec3(1.0) : rc * 0.3, 1.0);
         return;
 #endif
-        if (!dyn) {
+        // During a theme wave, a pixel well ahead of the front shows the old
+        // theme and one well behind it the new: each is copied from a cache
+        // drawn in that theme (restOk 2: old, 1: new). Stickers within R of
+        // the pixel's spot are the only ones it can show, so only a band of
+        // WAVE_B + 2 (R + px) is drawn live.
+        float need = 1.0;
+        if (wave.y > 0.5) {
+            float a = waveFront() - dot(uv, WAVE_DIR);
+            need = a < -(R + px) ? 2.0 : (a > WAVE_B + R + px ? 1.0 : 0.0);
+        }
+        if (!dyn && need > 0.5) {
             // A cache drawn at another pan holds the same picture shifted
             // sideways by the difference (the camera slides in its own
             // plane), so during a slide each pixel reads whichever cache
@@ -925,9 +970,9 @@ void main() {
             vec3 d = slide - sS;
             d -= PAN_PERIOD * floor(d / PAN_PERIOD + 0.5);
             vec3 x = tc.x + d / (2.0 * VIEW * aspect);
-            if (restOk.x > 0.5 && x.x >= 0.0 && x.x < 1.0) { fragColor = texture(rest, vec2(x.x, tc.y)) * qt_Opacity; return; }
-            if (restOk.y > 0.5 && x.y >= 0.0 && x.y < 1.0) { fragColor = texture(rest1, vec2(x.y, tc.y)) * qt_Opacity; return; }
-            if (restOk.z > 0.5 && x.z >= 0.0 && x.z < 1.0) { fragColor = texture(rest2, vec2(x.z, tc.y)) * qt_Opacity; return; }
+            if (restOk.x == need && x.x >= 0.0 && x.x < 1.0) { fragColor = texture(rest, vec2(x.x, tc.y)) * qt_Opacity; return; }
+            if (restOk.y == need && x.y >= 0.0 && x.y < 1.0) { fragColor = texture(rest1, vec2(x.y, tc.y)) * qt_Opacity; return; }
+            if (restOk.z == need && x.z >= 0.0 && x.z < 1.0) { fragColor = texture(rest2, vec2(x.z, tc.y)) * qt_Opacity; return; }
         }
     }
 
@@ -1020,7 +1065,9 @@ void main() {
         }
     }
 
-    vec3 col = bgColor.rgb;
+    // the theme wave at this pixel and at the hit cube's centre
+    float pPix = wavePhase(uv);
+    vec3 col = mix(oBg.rgb, bgColor.rgb, smoothstep(0.0, 1.0, pPix));
     vec3 nl = vec3(0.0);                                // hit face normal, cubie frame
     float shownCover = 0.0;                             // how much of the pixel is sticker
     if (hitAny) {
@@ -1033,7 +1080,10 @@ void main() {
         else if (al.y >= al.z)            { nl = vec3(0.0, sign(lp.y), 0.0); fuv = lp.xz; fa = 1.0; }
         else                              { nl = vec3(0.0, 0.0, sign(lp.z)); fuv = lp.xy; fa = 2.0; }
 
-        col = bodyColor.rgb;
+        vec3 cw = h.cid * P + (h.tex > -0.5 ? vec3(h.pop, 0.0, 0.0) : vec3(0.0));
+        vec2 cubeSpot = vec2(dot(cw, rt) - slide, dot(cw, up));
+        vec3 bodyNow = mix(oBody.rgb, bodyColor.rgb, smoothstep(0.0, 1.0, wavePhase(cubeSpot)));
+        col = bodyNow;
         if (dot(h.cell, nl) > 0.5) {                    // outer faces carry stickers
             // Rounded-square sticker: half size 0.43, corner radius 0.035,
             // pulled in a little more on sides where this cubie meets the
@@ -1042,6 +1092,15 @@ void main() {
             vec2 lo = vec2(-0.43) + 0.045 * step(0.5, -ce);
             vec2 hi = vec2(0.43) - 0.045 * step(0.5, ce);
             vec2 ctr = 0.5 * (lo + hi);
+            // The theme wave flips this sticker about its centre line: its
+            // width shrinks to |cos| of the flip angle, and past edge-on it
+            // shows its back, in the new theme's colour. Its phase comes from
+            // its centre's spot on screen (turning layers not counted).
+            vec3 sw = cw + rotA(h.cell + nl * 0.5, h.axis, h.ang);
+            float ph = wavePhase(vec2(dot(sw, rt) - slide, dot(sw, up)));
+            bool showOld = ph < 0.5;
+            float squeeze = wave.y > 0.5 ? max(abs(cos(ph * 3.14159265)), 0.02) : 1.0;   // exactly 1 with no wave
+            fuv.x = ctr.x + (fuv.x - ctr.x) / squeeze;
             vec2 sq = abs(fuv - ctr) - (0.5 * (hi - lo) - 0.035);
             float sd = length(max(sq, 0.0)) + min(max(sq.x, sq.y), 0.0) - 0.035;
             // Antialias over exactly one screen pixel. The projection is
@@ -1056,6 +1115,8 @@ void main() {
             vec3 dy = rotA((up - fw * (dot(nw, up) / nf)) * px, h.axis, -h.ang);
             vec2 fx = fa < 0.5 ? dx.yz : (fa < 1.5 ? dx.xz : dx.xy);
             vec2 fy = fa < 0.5 ? dy.yz : (fa < 1.5 ? dy.xz : dy.xy);
+            fx.x /= squeeze;
+            fy.x /= squeeze;
             float w = max(abs(dot(g, fx)) + abs(dot(g, fy)), 1e-5);
             // pixel art: a pixel is all sticker or all plastic, theme colours only
             float cover = pixelArt > 0.5 ? step(sd, 0.0) : clamp(0.5 - sd / w, 0.0, 1.0);
@@ -1063,9 +1124,9 @@ void main() {
             if (cover > 0.0) {
                 vec3 c = h.cell, n = nl;
                 homeOf(h, c, n);
-                vec3 stk = h.tex > -0.5 ? paletteColor(mosaicIndex(h.tex, c, n)) : stickerColor(n);
+                vec3 stk = h.tex > -0.5 ? paletteColor(mosaicIndex(h.tex, c, n), showOld) : stickerColor(n, showOld);
                 // blend in linear light, then back to sRGB
-                vec3 body = pow(bodyColor.rgb, vec3(2.2));
+                vec3 body = pow(bodyNow, vec3(2.2));
                 col = pow(mix(body, pow(stk, vec3(2.2)), cover), vec3(1.0 / 2.2));
             }
         }

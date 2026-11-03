@@ -142,7 +142,7 @@ So opposite faces stay opposite, and every cube remains a legal state in any pal
 
 - **A colour used twice.** If a theme uses one colour for two roles, or two nearly identical ones, the later role borrows a spare colour from the same theme (cyan, magenta, accent, or a bright variant). Truly monochrome themes keep their own shades.
 - **Exact colours.** A theme can set the cube's colours exactly with optional `omacube_*` keys, which Omarchy itself ignores. The Omacube theme uses them for the classic cube.
-- **Theme switches.** The plugin re-reads the colours when `omarchy theme set` writes the new theme's name, and crossfades over 0.9 s.
+- **Theme switches.** The plugin re-reads the colours when `omarchy theme set` writes the new theme's name, and plays the theme wave (section 22).
 
 `node tools/check-palette.mjs` runs the plugin's own `Palette.js` against every installed theme. It also checks odd input (empty, garbage, oversized, CRLF), 2,000 random palettes, and that the Omacube theme gives exactly the classic cube.
 
@@ -271,7 +271,7 @@ Cubes take turns: at any moment only the free cubes of one class are mid-burst, 
 
 **Where a cube can change the picture.** A cube's every point is within R of its centre, and its centre slides only along the view axis, so on screen a cube stays inside the disc of radius R around its column's spot, whatever it does. A pixel outside every moving cube's disc sees exactly what it would see with every cube at rest. (A moving cube far from the ray can still change the length of a march step, and so the point within EPS of a surface where the march stops. That can shift the anti-aliasing of a sticker edge slightly, or, on a pixel right at a cube's edge, land it on the other side of that edge. It changes no colour otherwise.)
 
-**The cache.** A second pass of the shader (`restPass = 1`) draws the picture with every cube at rest: no bursts, no slides, no pops, the word solved. It has no clock, so it is redrawn only when it is given another workspace, new colours or a new size. Each screen keeps three caches (section 21). While a theme crossfades, every pixel is drawn live instead.
+**The cache.** A second pass of the shader (`restPass = 1`) draws the picture with every cube at rest: no bursts, no slides, no pops, the word solved. It has no clock, so it is redrawn only when it is given another workspace, new colours or a new size. Each screen keeps three caches (section 21); a theme change is drawn from them too (section 22).
 
 **The motion map.** Each frame, a third tiny pass (`mapPass = 2`, the height map's layout) sets a texel for each column holding a cube mid-burst. Only a free cube moves, and a free cube has an empty cell in front of it, so its coordinate sum is at least −4: the column's two highest cells with sum at most 0 cover every candidate. It is the same test the slid-out cube drawing uses (section 15), once per column instead of once per pixel.
 
@@ -299,3 +299,14 @@ A workspace switch slides the camera one screen width along rt, which lies in th
 **Checks.** Self-check 12 renders mid-slide positions live and from two shifted caches, to the right, to the left, in pixel art and on a monument. The same world spot reached from another pan rounds differently in its last bits, so a few tenths of a percent of pixels differ by 1/255. Not counting differences of 1 or 2/255, they match except for edge pixels beside a moving cube, as in self-check 10.
 
 On the HD 520 at 1600x900, a run of slides one second apart went from 8.5 to about 40 frames a second; the slides themselves run at the display's 60 Hz with an occasional 33 ms frame, and the eight strip frames after each one take 25 to 55 ms.
+
+## 22. The theme wave
+
+When the theme changes, a straight front sweeps across the screen in 1.8 s, moving right and a little down (direction (2, −1)/√5 on screen). Each sticker the front passes flips over about its centre line like a card: over the next WAVE_B = 7.5 world units of the front's travel (two and a half cubes) its angle goes from 0 to 180°, its width on the cube face shrinks to |cos| of the angle, and past edge-on it shows its back, in the new theme's colour. A sticker's phase comes from its centre's spot on screen, so the flip ripples across each cube sticker by sticker. The plastic and the background change colour smoothly as the front passes each cube and each pixel.
+
+**From the caches.** Before the front starts, this workspace's rest picture is drawn in the new theme, a strip a frame, while the screen keeps copying the old one. A pixel's own sticker lies within R of its spot, so a pixel more than R + 1 px ahead of the front shows only unflipped stickers, and one more than WAVE_B + R + 1 px behind shows only flipped ones. Those copy the old-theme or the new-theme cache. Only the band between, about 13 world units wide, is drawn live, plus moving cubes as always. After the wave, the neighbours are redrawn in the new theme, one at a time.
+
+On the HD 520 at 1600x900, with the theme switched every 3 s, frames over 90 ms went from 89 in 300 (an all-live crossfade) to 1, and the wave runs at about 25 frames a second.
+
+**Checks.** Self-check 13 renders the wave at 30% and 60% of its sweep, live and from the two caches, at rest and on a monument, and finds them identical but for a few pixels off by up to a few /255.
+

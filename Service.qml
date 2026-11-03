@@ -92,16 +92,20 @@ Item {
     return home ? home + "/.local/state/omarchy/current" : ""
   }
   property var palette: Palette.CLASSIC
-  property bool colorsReady: false     // no crossfade for the first load
+  property bool colorsReady: false     // no theme wave for the first load
 
+  // A theme change after the first load plays the theme wave on every screen.
+  // The old palette is handed over in a property: caches are matched to a
+  // palette by identity, and a signal argument would arrive as a copy.
+  property var previousPalette: null
+  signal themeSwapped()
   function applyColors(text) {
-    var fade = colorsReady
+    var wave = colorsReady
+    previousPalette = palette
     palette = Palette.fromText(text)
     colorsReady = true
-    if (fade) colorFade.restart()
+    if (wave) themeSwapped()
   }
-  // while the colours crossfade, every pixel is drawn live (see the rest cache)
-  Timer { id: colorFade; interval: 950 }
 
   FileView {
     id: themeColors
@@ -313,20 +317,25 @@ Item {
       // this workspace and both neighbours, so a slide copies them too,
       // shifted (MATH.md, "Slides from the cache"). After a slide settles,
       // the one missing neighbour is drawn; after a theme change, all three,
-      // one at a time. During a theme crossfade every pixel is drawn live.
+      // one at a time.
       readonly property bool sliding: root.turnPos !== root.turns
       readonly property var slots: [slotA, slotB, slotC]
-      function slotOk(s) { return s.done && s.colours === root.palette && !colorFade.running }
+      // 1: drawn in the current theme; 2: in the theme a wave is replacing
+      function slotOk(s) {
+        if (!s.done) return 0
+        if (s.colours === root.palette) return 1
+        return waving && s.colours === oldPalette ? 2 : 0
+      }
       function restPlan() {
-        if (sliding || colorFade.running) return
+        if (sliding || waving) return
         for (var k = 0; k < 3; k++) if (slots[k].drawing) return   // one at a time
         var want = [root.turns, root.turns + 1, root.turns - 1]
         for (var i = 0; i < want.length; i++) {
           var held = false
-          for (var j = 0; j < 3; j++) if (slots[j].turn === want[i] && slotOk(slots[j])) held = true
+          for (var j = 0; j < 3; j++) if (slots[j].turn === want[i] && slotOk(slots[j]) === 1) held = true
           if (held) continue
           var pick = null
-          for (j = 0; j < 3 && !pick; j++) if (!slotOk(slots[j])) pick = slots[j]
+          for (j = 0; j < 3 && !pick; j++) if (slotOk(slots[j]) !== 1) pick = slots[j]
           for (j = 0; j < 3 && !pick; j++) if (want.indexOf(slots[j].turn) < 0) pick = slots[j]
           // this workspace's picture at once, a neighbour's a strip a frame
           pick.draw(want[i], root.palette, i === 0 ? 1 : 8)
@@ -346,13 +355,49 @@ Item {
       }
       Timer { id: restSettle; interval: 150; running: true; onTriggered: panel.restPlan() }
       onSlidingChanged: if (!sliding) restSettle.restart()
+
+      // The theme wave (MATH.md, "The theme wave"). This workspace's picture
+      // is drawn in the new theme first, a strip a frame, while the screen
+      // still copies the old one; then a front sweeps across in 1.8 s and
+      // every sticker it passes flips over to the new colour. Ahead of the
+      // front the old picture is copied, behind it the new one, and only a
+      // band around the front is drawn live.
+      property var oldPalette: null      // the theme being replaced; null: no wave
+      readonly property bool waving: oldPalette !== null
+      property real waveT: 0
       Connections {
-        target: colorFade
-        function onRunningChanged() { if (!colorFade.running) restSettle.restart() }
+        target: root
+        function onThemeSwapped() { panel.startWave(root.previousPalette) }
       }
-      RestSlot { id: slotA; onDrawn: restStagger.restart(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: canvas.texW; texH: canvas.texH; fxW: canvas.width; fxH: canvas.height; panPeriod: root.panPeriod; mosaic: mosaicData; shader: fx.fragmentShader }
-      RestSlot { id: slotB; onDrawn: restStagger.restart(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: canvas.texW; texH: canvas.texH; fxW: canvas.width; fxH: canvas.height; panPeriod: root.panPeriod; mosaic: mosaicData; shader: fx.fragmentShader }
-      RestSlot { id: slotC; onDrawn: restStagger.restart(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: canvas.texW; texH: canvas.texH; fxW: canvas.width; fxH: canvas.height; panPeriod: root.panPeriod; mosaic: mosaicData; shader: fx.fragmentShader }
+      function startWave(previous) {
+        waveAnim.stop()
+        if (!waving) oldPalette = previous
+        waveT = 0
+        for (var k = 0; k < 3; k++)
+          if (slots[k].turn === root.turns && slotOk(slots[k]) === 1) { waveAnim.start(); return }
+        // draw it in a slot that is not holding this workspace's old picture
+        var pick = null
+        for (k = 0; k < 3 && !pick; k++) if (!(slots[k].turn === root.turns && slotOk(slots[k]) === 2)) pick = slots[k]
+        if (!pick) pick = slots[0]
+        pick.draw(root.turns, root.palette, 8)
+      }
+      function slotDrawn() {
+        if (waving && !waveAnim.running) {
+          for (var k = 0; k < 3; k++)
+            if (slots[k].turn === root.turns && slotOk(slots[k]) === 1) { waveAnim.start(); return }
+          return
+        }
+        restStagger.restart()
+      }
+      NumberAnimation {
+        id: waveAnim
+        target: panel; property: "waveT"; from: 0; to: 1
+        duration: 1800; easing.type: Easing.InOutSine
+        onFinished: { panel.oldPalette = null; panel.waveT = 0; restSettle.restart() }
+      }
+      RestSlot { id: slotA; onDrawn: panel.slotDrawn(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: canvas.texW; texH: canvas.texH; fxW: canvas.width; fxH: canvas.height; panPeriod: root.panPeriod; mosaic: mosaicData; shader: fx.fragmentShader }
+      RestSlot { id: slotB; onDrawn: panel.slotDrawn(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: canvas.texW; texH: canvas.texH; fxW: canvas.width; fxH: canvas.height; panPeriod: root.panPeriod; mosaic: mosaicData; shader: fx.fragmentShader }
+      RestSlot { id: slotC; onDrawn: panel.slotDrawn(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: canvas.texW; texH: canvas.texH; fxW: canvas.width; fxH: canvas.height; panPeriod: root.panPeriod; mosaic: mosaicData; shader: fx.fragmentShader }
 
       Item {
         id: canvas
@@ -385,7 +430,7 @@ Item {
           property vector2d hSize: heightMap.hSize
           property real mapPass: 0
           property real restPass: 0
-          property vector3d restOk: Qt.vector3d(panel.slotOk(slotA) ? 1 : 0, panel.slotOk(slotB) ? 1 : 0, panel.slotOk(slotC) ? 1 : 0)
+          property vector3d restOk: Qt.vector3d(panel.slotOk(slotA), panel.slotOk(slotB), panel.slotOk(slotC))
           property real useRest: restOk.x + restOk.y + restOk.z > 0 ? 1 : 0
           property vector3d restPans: Qt.vector3d(slotA.pan, slotB.pan, slotC.pan)
           property vector2d strip           // used by the rest pass only
@@ -415,15 +460,17 @@ Item {
           property color c5: root.palette.stickers[5]
           property color bodyColor: root.palette.plastic
           property color bgColor: root.palette.empty
-          // crossfade to a new theme's colours
-          Behavior on c0 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
-          Behavior on c1 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
-          Behavior on c2 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
-          Behavior on c3 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
-          Behavior on c4 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
-          Behavior on c5 { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
-          Behavior on bodyColor { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
-          Behavior on bgColor { enabled: root.colorsReady; ColorAnimation { duration: 900 } }
+          // the theme wave: its progress, and the theme it is replacing
+          property vector4d wave: Qt.vector4d(panel.waveT, panel.waving ? 1 : 0, 0, 0)
+          readonly property var old: panel.oldPalette || root.palette
+          property color o0: old.stickers[0]
+          property color o1: old.stickers[1]
+          property color o2: old.stickers[2]
+          property color o3: old.stickers[3]
+          property color o4: old.stickers[4]
+          property color o5: old.stickers[5]
+          property color oBody: old.plastic
+          property color oBg: old.empty
         }
       }
     }

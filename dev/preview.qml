@@ -31,6 +31,15 @@ ShellRoot {
         printErrors: false
         onLoaded: root.palette = Palette.fromText(text())
     }
+    // OMACUBE_OLD_THEME + OMACUBE_WAVE: the theme wave at that progress (0..1),
+    // from that theme's colours to OMACUBE_THEME's
+    property var oldPalette: null
+    FileView {
+        path: Quickshell.env("OMACUBE_OLD_THEME") || ""
+        printErrors: false
+        onLoaded: root.oldPalette = Palette.fromText(text())
+    }
+    readonly property real waveT: parseFloat(Quickshell.env("OMACUBE_WAVE") || "0")
 
     function wrap(x, m) { return ((x % m) + m) % m }
     function centred(x, m) { return wrap(x + m / 2, m) - m / 2 }
@@ -107,11 +116,19 @@ ShellRoot {
         readonly property var restTurns: (Quickshell.env("OMACUBE_REST_TURNS") || String(Math.round(root.turns))).split(",").map(Number)
         readonly property int pieces: parseInt(Quickshell.env("OMACUBE_REST_PIECES") || "8")
         readonly property var slots: [slotA, slotB, slotC]
-        readonly property bool cacheDone: !useCache || ((restTurns.length < 1 || slotA.done) && (restTurns.length < 2 || slotB.done) && (restTurns.length < 3 || slotC.done))
+        // OMACUBE_REST_OLD_TURNS: more caches, drawn in OMACUBE_OLD_THEME
+        readonly property var oldTurns: Quickshell.env("OMACUBE_REST_OLD_TURNS") ? Quickshell.env("OMACUBE_REST_OLD_TURNS").split(",").map(Number) : []
+        readonly property int nSlots: Math.min(3, restTurns.length + oldTurns.length)
+        readonly property bool cacheDone: !useCache || ((nSlots < 1 || slotA.done) && (nSlots < 2 || slotB.done) && (nSlots < 3 || slotC.done))
         function drawNext() {
-            for (var i = 0; i < restTurns.length && i < 3; i++)
-                if (!slots[i].done && !slots[i].drawing) { slots[i].draw(restTurns[i], root.palette, pieces); return }
+            for (var i = 0; i < nSlots; i++) {
+                if (slots[i].done || slots[i].drawing) continue
+                var old = i >= restTurns.length
+                slots[i].draw(old ? oldTurns[i - restTurns.length] : restTurns[i], old ? root.oldPalette : root.palette, pieces)
+                return
+            }
         }
+        function okOf(s) { return !s.done ? 0 : (s.colours === root.palette ? 1 : 2) }
         RestSlot { id: slotA; onDrawn: win.drawNext(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: root.w; texH: root.h; fxW: fx.width; fxH: fx.height; panPeriod: 3072 * 3 * Math.SQRT2; panShift: root.panOffset; mosaic: mosaicData; shader: fx.fragmentShader }
         RestSlot { id: slotB; onDrawn: win.drawNext(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: root.w; texH: root.h; fxW: fx.width; fxH: fx.height; panPeriod: 3072 * 3 * Math.SQRT2; panShift: root.panOffset; mosaic: mosaicData; shader: fx.fragmentShader }
         RestSlot { id: slotC; onDrawn: win.drawNext(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: root.w; texH: root.h; fxW: fx.width; fxH: fx.height; panPeriod: 3072 * 3 * Math.SQRT2; panShift: root.panOffset; mosaic: mosaicData; shader: fx.fragmentShader }
@@ -130,7 +147,12 @@ ShellRoot {
             property real restPass: 0
             // OMACUBE_REST=1: copy pixels nothing moves near from the rest caches
             property real useRest: win.useCache ? 1 : 0
-            property vector3d restOk: Qt.vector3d(slotA.done ? 1 : 0, slotB.done ? 1 : 0, slotC.done ? 1 : 0)
+            property vector3d restOk: Qt.vector3d(win.okOf(slotA), win.okOf(slotB), win.okOf(slotC))
+            property vector4d wave: Qt.vector4d(root.waveT, root.oldPalette ? 1 : 0, 0, 0)
+            readonly property var old: root.oldPalette || root.palette
+            property color o0: old.stickers[0]; property color o1: old.stickers[1]; property color o2: old.stickers[2]
+            property color o3: old.stickers[3]; property color o4: old.stickers[4]; property color o5: old.stickers[5]
+            property color oBody: old.plastic; property color oBg: old.empty
             property vector3d restPans: Qt.vector3d(slotA.pan, slotB.pan, slotC.pan)
             property vector2d strip
             property var rest: slotA.cache

@@ -10,7 +10,7 @@ Your Omarchy desktop as a 3x3 puzzle cube. Omacube is an animated background: an
 - **The cubes spell Omarchy.** Here and there the corner of a giant solved cube, built from the same cubes, rises out of the pile: white top, red right face, green left face. On its red face, OMARCHY is a sticker mosaic in yellow, the way people build pictures out of real puzzle cubes: every pixel is one sticker, across 20 cubes that are each a legal cube state. Every two minutes those cubes take turns popping out of the wall, scramble, push back in, then pop out again and turn back into the word.
 - **Sharp at any size.** It renders at your screen's resolution with antialiased stickers. 6K supersampling (cleaner edges, much more power) and pixel art (hard pixels in your theme's exact colours, far lighter on the GPU) are each one setting away.
 - **Workspaces slide the stack.** Every workspace switch slides the field one screen width sideways, with your windows, on the same flick-and-settle curve.
-- **Your theme's colours.** The cubes take their sticker colours from your current Omarchy theme and crossfade when you switch themes. For the classic cube colours, pick the Omacube theme in the theme switcher.
+- **Your theme's colours.** The cubes take their sticker colours from your current Omarchy theme and when you switch themes, a wave sweeps across the screen flipping every sticker over, like a card, to the new colour. For the classic cube colours, pick the Omacube theme in the theme switcher.
 - **Cube-face tiling** (with the Omacube theme). Each workspace is a 3x3 cube face. Windows tile into it like stickers and move by real face turns and layer turns.
 
 The plugin is one GPU fragment shader. It reads only your current theme's colours and its own mosaic data, writes no files, runs no processes and makes no network connections. See [DISCLOSURE.md](DISCLOSURE.md).
@@ -34,7 +34,7 @@ Your normal wallpaper shows again as soon as the plugin is disabled. Nothing els
 
 ## Colours
 
-By default the cubes wear your current theme's colours. Each sticker takes the theme colour with the same role: red, orange, foreground (as the white face), yellow, green and blue, on the theme's background as plastic. Opposite faces stay opposite, so every cube is still a real cube state in any palette. When you switch themes, the colours crossfade.
+By default the cubes wear your current theme's colours. Each sticker takes the theme colour with the same role: red, orange, foreground (as the white face), yellow, green and blue, on the theme's background as plastic. Opposite faces stay opposite, so every cube is still a real cube state in any palette. When you switch themes, a wave flips the stickers over to the new colours.
 
 ## The Omacube theme
 
