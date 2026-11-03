@@ -9,8 +9,8 @@ Omacube loads two compiled shaders: `omacube.frag.qsb`, the background, and `egg
 | Tool | `/usr/lib/qt6/bin/qsb` 6.12.0, from Arch `qt6-shadertools 6.12.0-1` |
 | Command | `qsb --glsl "100es,300es,120,150" --hlsl 50 --msl 12 -o shaders/omacube.frag.qsb shaders/omacube.frag` |
 | Output | `shaders/omacube.frag.qsb`, SHA-256 `433c9a730ec2665dc6e63a83b74c1c3454dd1c366a7d89c869c74633354d67c3` |
-| Second source | `shaders/eggcube.frag`, SHA-256 `5c3aecb7680c437046daa42b7fb76d4d2d1d4ba5d04f1ca1e9f5ffa754728929` |
-| Second output | `shaders/eggcube.frag.qsb`, SHA-256 `2973069a70142d1745c80493e72b266cc823955075d724e884000ddea563b60c` (same tool and flags) |
+| Second source | `shaders/eggcube.frag`, SHA-256 `d000df304a9718d5d219a6b3378d87014ce6cfc4c70f39bd69d5b01c60fe58f1` |
+| Second output | `shaders/eggcube.frag.qsb`, SHA-256 `9833bb563c42a5c1af8f73e14a69756ec0906cb37b1fabee325d809fcbc431c1` (same tool and flags) |
 
 ## Check it yourself
 

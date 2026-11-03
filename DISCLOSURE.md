@@ -69,7 +69,7 @@ These are in the repository but run only if you run them yourself:
 
 ## What it costs
 
-An animated background makes the compositor repaint every frame, including blur behind translucent windows. On an RTX 4070 SUPER at 3440x1440, whole-GPU power with the background showing is about 23 W at the default (the screen's own resolution), about 29 W at the optional 6K and about 14 W as pixel art, against about 6 W with nothing showing (0.3.3 drew about 54 W, 147 W and 17 W). On an Intel HD 520 at 1600x900 the default keeps the GPU about 78% busy at about 720 MHz, against about 50% for any full-screen animation. Redrawing stops while a fullscreen window covers the screen, or tiled windows fill it. See the README's Settings and Performance sections for how to lower the resolution and frame rate.
+An animated background makes the compositor repaint every frame, including blur behind translucent windows. On an RTX 4070 SUPER at 3440x1440, whole-GPU power with the background showing is about 21 to 23 W at the default (the screen's own resolution), about 31 W at the optional 6K and about 14 W as pixel art, against about 6 W with nothing showing (0.3.3 drew about 54 W, 147 W and 17 W). On an Intel HD 520 at 1600x900 the default keeps the GPU about 78% busy at about 720 MHz, against about 50% for any full-screen animation. Redrawing stops while a fullscreen window covers the screen, or tiled windows fill it. See the README's Settings and Performance sections for how to lower the resolution and frame rate.
 
 ## Maintainer and licence
 

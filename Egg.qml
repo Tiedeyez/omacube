@@ -20,7 +20,10 @@ PanelWindow {
   signal finished()
   property bool test: false              // dev/egg-test.sh: leave the keyboard alone
   readonly property alias cubeView: view
+  readonly property alias sceneView: scene
   function key(letter, prime) { userTurn(Logic.keyMove(n, rot, letter, 1, prime)) }
+  function testSolved() { stickers = Logic.solvedState(n); stickerCanvas().requestPaint() }
+  function stickerCanvas() { return stateCanvas }
 
   color: "transparent"
   anchors { top: true; bottom: true; left: true; right: true }
@@ -53,11 +56,16 @@ PanelWindow {
   property string banner: ""
   property real celebrate: 0
   property bool help: true
+  // the celebration when it is solved: seconds since, or -1
+  property real winT: -1
+  property var parts: []                             // confetti
+  readonly property real hop: winT >= 0 && winT < 0.7 ? Math.sin(Math.PI * winT / 0.7) * height * 0.07 : 0
+  readonly property real popScale: winT >= 0 && winT < 0.5 ? 1 + 0.14 * Math.sin(Math.PI * winT / 0.5) : 1
 
   readonly property real playHalf: Math.min(width, height) * 0.17 * zoom
-  readonly property real half: startHalf + (playHalf - startHalf) * pose
+  readonly property real half: (startHalf + (playHalf - startHalf) * pose) * popScale
   readonly property real cx: startX + (width / 2 - startX) * pose
-  readonly property real cy: startY + (height / 2 - startY) * pose + Math.sin(clock * 1.3) * height * 0.008 * pose
+  readonly property real cy: startY + (height / 2 - startY) * pose + Math.sin(clock * 1.3) * height * 0.008 * pose - hop
   readonly property var rot: Logic.rows(q)
 
   // ---- the intro and the outro ------------------------------------------------------
@@ -76,6 +84,7 @@ PanelWindow {
   onPoseChanged: if (phase !== "play") q = Logic.slerp(poseFromQ, poseToQ, Math.max(0, Math.min(1, pose)))
   function leave() {
     if (phase === "outro") return
+    intro.stop()                                     // Esc during the intro
     phase = "outro"
     omega = [0, 0, 0]
     poseFromQ = isoQ
@@ -98,6 +107,20 @@ PanelWindow {
   function step(dt) {
     clock += dt
     celebrate = Math.max(0, celebrate - dt * 0.6)
+    if (winT >= 0) {
+      winT += dt
+      // confetti: thrown out of the cube, falling, tumbling, fading
+      var g = height * 1.7, live = []
+      for (var i = 0; i < parts.length; i++) {
+        var c = parts[i]
+        var vy = c.vy + g * dt
+        var o = { x: c.x + c.vx * dt, y: c.y + vy * dt, vx: c.vx * Math.exp(-0.6 * dt), vy: vy, r: c.r + c.vr * dt, vr: c.vr,
+                  col: c.col, size: c.size, life: c.life - dt }
+        if (o.life > 0 && o.y < height + 40) live.push(o)
+      }
+      parts = live
+      if (winT > 3 && parts.length === 0) winT = -1
+    }
     // the turn in progress
     if (current && !waitingPaint) {
       current.t += dt / current.dur
@@ -142,11 +165,30 @@ PanelWindow {
       moves++
       if (Logic.isSolved(n, stickers)) {
         var secs = Math.round(clock - startedAt)
-        banner = "Solved in " + moves + (moves === 1 ? " move" : " moves") + ", " + Math.floor(secs / 60) + ":" + ("0" + secs % 60).slice(-2)
-        celebrate = 1
-        bannerFade.restart()
+        banner = "Solved!\n" + moves + (moves === 1 ? " move" : " moves") + "  ·  " + Math.floor(secs / 60) + ":" + ("0" + secs % 60).slice(-2)
+        win()
       }
     }
+  }
+  // Solved: it hops, takes a spin that friction slows (the same physics as a
+  // fling), pulses gold, and throws confetti in its six colours; a ring of
+  // light spreads out from it.
+  function win() {
+    celebrate = 1
+    winT = 0
+    wholeTurn.active = false
+    omega = [0, 13, 0]
+    var list = []
+    for (var i = 0; i < 90; i++) {
+      var a = Math.random() * Math.PI * 2
+      var sp = height * (0.45 + Math.random() * 0.9)
+      list.push({ x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp * 0.7 - height * 0.6,
+                  r: Math.random() * 360, vr: (Math.random() - 0.5) * 900,
+                  col: colours.stickers[i % 6], size: height * (0.008 + Math.random() * 0.008), life: 1.6 + Math.random() * 1.0 })
+    }
+    parts = list
+    ring.restart()
+    bannerFade.restart()
   }
   QtObject {
     id: wholeTurn
@@ -201,37 +243,71 @@ PanelWindow {
   }
 
   // ---- the scene --------------------------------------------------------------------
-  Rectangle {
+  // (one item, so dev/egg-test.sh can take a picture of it)
+  Item {
+    id: scene
     anchors.fill: parent
-    color: "black"
-    opacity: 0.22 * egg.pose
-  }
+    Rectangle {
+      anchors.fill: parent
+      color: "black"
+      opacity: 0.22 * egg.pose
+    }
 
-  ShaderEffect {
-    id: view
-    readonly property real size: egg.half * 4.4
-    width: size; height: size
-    x: egg.cx - size / 2; y: egg.cy - size / 2
-    fragmentShader: Qt.resolvedUrl("shaders/eggcube.frag.qsb")
-    property vector4d r0: Qt.vector4d(egg.rot[0][0], egg.rot[0][1], egg.rot[0][2], 0)
-    property vector4d r1: Qt.vector4d(egg.rot[1][0], egg.rot[1][1], egg.rot[1][2], 0)
-    property vector4d r2: Qt.vector4d(egg.rot[2][0], egg.rot[2][1], egg.rot[2][2], 0)
-    property vector4d turn: egg.current ? Qt.vector4d(egg.current.axis, egg.current.layer, egg.turnAngle, 0) : Qt.vector4d(0, 0, 0, 0)
-    readonly property real dpr: egg.devicePixelRatio || 1
-    property vector4d geo: Qt.vector4d(egg.n, egg.half / (size / 2), 1, 1 / Math.max(1, size * dpr))
-    property vector4d glow: Qt.vector4d(egg.phase === "intro" ? 1 - 0.85 * egg.pose : (egg.phase === "outro" ? 1 - 0.85 * egg.pose : 0.15), egg.celebrate, 0, 0)
-    property color c0: egg.colours.stickers[0]
-    property color c1: egg.colours.stickers[1]
-    property color c2: egg.colours.stickers[2]
-    property color c3: egg.colours.stickers[3]
-    property color c4: egg.colours.stickers[4]
-    property color c5: egg.colours.stickers[5]
-    property color bodyColor: egg.colours.plastic
-    property var stickers: stateTex
-    // drawn at twice the resolution and scaled down: smooth edges
-    layer.enabled: true
-    layer.smooth: true
-    layer.textureSize: Qt.size(size * dpr * 2, size * dpr * 2)
+    ShaderEffect {
+      id: view
+      readonly property real size: egg.half * 4.4
+      width: size; height: size
+      x: egg.cx - size / 2; y: egg.cy - size / 2
+      fragmentShader: Qt.resolvedUrl("shaders/eggcube.frag.qsb")
+      property vector4d r0: Qt.vector4d(egg.rot[0][0], egg.rot[0][1], egg.rot[0][2], 0)
+      property vector4d r1: Qt.vector4d(egg.rot[1][0], egg.rot[1][1], egg.rot[1][2], 0)
+      property vector4d r2: Qt.vector4d(egg.rot[2][0], egg.rot[2][1], egg.rot[2][2], 0)
+      property vector4d turn: egg.current ? Qt.vector4d(egg.current.axis, egg.current.layer, egg.turnAngle, 0) : Qt.vector4d(0, 0, 0, 0)
+      readonly property real dpr: egg.devicePixelRatio || 1
+      // drawn at twice the resolution and scaled down, for smooth edges, at
+      // most 2048 pixels a side; geo.w: one of those pixels, in half sizes
+      readonly property real texSide: Math.max(2, Math.min(size * dpr * 2, 2048))
+      property vector4d geo: Qt.vector4d(egg.n, egg.half / (size / 2), 1, 2 / texSide)
+      property vector4d glow: Qt.vector4d(egg.phase === "intro" ? 1 - 0.85 * egg.pose : (egg.phase === "outro" ? 1 - 0.85 * egg.pose : 0.15), egg.celebrate, 0, 0)
+      property color c0: egg.colours.stickers[0]
+      property color c1: egg.colours.stickers[1]
+      property color c2: egg.colours.stickers[2]
+      property color c3: egg.colours.stickers[3]
+      property color c4: egg.colours.stickers[4]
+      property color c5: egg.colours.stickers[5]
+      property color bodyColor: egg.colours.plastic
+      property var stickers: stateTex
+      layer.enabled: true
+      layer.smooth: true
+      layer.textureSize: Qt.size(texSide, texSide)
+    }
+
+    // ---- the celebration --------------------------------------------------------------
+    Rectangle {
+      id: ringItem
+      property real t: 1
+      width: egg.half * (1.6 + 7 * t); height: width
+      x: egg.cx - width / 2; y: egg.cy - height / 2
+      radius: width / 2
+      color: "transparent"
+      border.color: "#ffd02e"
+      border.width: Math.max(2, egg.half * 0.12 * (1 - t))
+      opacity: t < 1 ? 0.9 * (1 - t) : 0
+      NumberAnimation on t { id: ring; running: false; from: 0; to: 1; duration: 900; easing.type: Easing.OutCubic }
+    }
+    Repeater {
+      model: egg.parts.length
+      Rectangle {
+        required property int index
+        readonly property var p: egg.parts[index] || ({ x: 0, y: 0, size: 0, r: 0, col: "transparent", life: 0 })
+        width: p.size; height: p.size * 0.6
+        x: p.x - width / 2; y: p.y - height / 2
+        rotation: p.r
+        color: p.col
+        opacity: Math.min(1, p.life / 0.6)
+        antialiasing: true
+      }
+    }
   }
 
   // ---- the mouse --------------------------------------------------------------------
@@ -273,7 +349,7 @@ PanelWindow {
       var axis = [dy / d, dx / d, 0]
       egg.q = Logic.qnorm(Logic.qmul(Logic.quat(axis, ang), egg.q))
       var dt = Math.max(egg.clock - lastT, 1 / 120)
-      var w = ang / dt
+      var w = Math.min(ang / dt, 25)                   // at most 4 turns a second
       egg.omega = [axis[0] * w, axis[1] * w, 0]
       lastP = [m.x, m.y]
       lastT = egg.clock
@@ -372,8 +448,10 @@ PanelWindow {
     y: parent.height * 0.1
     text: egg.banner
     color: "#ffd02e"
-    font.pixelSize: Math.max(22, egg.height * 0.035)
+    font.pixelSize: Math.max(22, egg.height * 0.04)
     font.bold: true
+    horizontalAlignment: Text.AlignHCenter
+    lineHeight: 1.1
     style: Text.Outline
     styleColor: Qt.rgba(0, 0, 0, 0.6)
     opacity: 0

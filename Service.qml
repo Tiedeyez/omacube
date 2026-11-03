@@ -280,7 +280,7 @@ Item {
       startX: root.egg.x
       startY: root.egg.y
       startHalf: root.egg.half
-      onFinished: eggOutro.restart()
+      onFinished: Qt.callLater(eggOutro.restart)   // not from inside the window being closed
     }
   }
 

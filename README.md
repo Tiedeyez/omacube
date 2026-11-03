@@ -145,7 +145,7 @@ Double-click the cube at the centre of the screen (with no window over it). It g
 | `H` | show or hide the help |
 | Esc | put it back in the wall |
 
-Solve it and it tells you your moves and time. While you play, it has the keyboard; Esc gives it back.
+Solve it and it celebrates: it hops and spins, a ring of light spreads out, confetti in its six colours flies, and it shows your moves and time. While you play, it has the keyboard; Esc gives it back.
 
 ## Performance
 
@@ -153,8 +153,8 @@ Whole-GPU power with the background showing, on an RTX 4070 SUPER at 3440x1440, 
 
 | Setting | Version 0.3.3 | This version |
 |---|---|---|
-| 6K (`renderWidth: 6144`) | about 147 W, GPU at full clock and 76% busy | about 29 W |
-| Your screen's resolution, the default (`renderWidth: 0`) | about 48 to 54 W | about 23 W |
+| 6K (`renderWidth: 6144`) | about 147 W, GPU at full clock and 76% busy | about 31 W |
+| Your screen's resolution, the default (`renderWidth: 0`) | about 48 to 54 W | about 21 to 23 W |
 | The default at `fps: 60` | about 130 W | about 28 W |
 | Pixel art (`pixelSize: 4`) | about 16 to 18 W | about 14 W, GPU near idle clocks |
 
@@ -170,7 +170,7 @@ On integrated graphics, an Intel HD 520 (Skylake, 2015) at 1600x900, GPU busy an
 | Pixel art (`pixelSize: 3`, `fps: 15`) | 15 | 59% at about 390 MHz |
 | Any full-screen animation, for comparison | | about 50% at about 390 MHz |
 
-Two things made the difference: a height map of the stack, and a cache of the picture at rest, so only the few cubes moving at any moment are drawn fresh ([MATH.md](MATH.md), sections 19 and 20). The caches hold the neighbouring workspaces too, so workspace slides are copied the same way and run at the display's refresh rate (section 21).
+Two things made the difference: a height map of the stack, and a cache of the picture at rest, so only the few cubes moving at any moment are drawn fresh ([MATH.md](MATH.md), sections 19 and 20). The caches hold the neighbouring workspaces too, so workspace slides are copied the same way (section 21): about 35 frames a second during a slide on the HD 520, where they used to be all live at 9.
 
 - It stops redrawing while a fullscreen window covers the screen, or tiled windows fill it.
 - Any animated wallpaper makes the compositor repaint the screen on every frame. On integrated graphics, pixel art at 15–20 fps is lightest.

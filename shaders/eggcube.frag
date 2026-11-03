@@ -117,7 +117,9 @@ void main() {
         // a yellow halo around the cube while it glows
         vec3 q = oc - dc * dot(oc, dc);
         float dd = max(sdBox(q, 1.5), 0.0);
-        float a = clamp(gl * 0.85 * exp(-dd / 0.55), 0.0, 1.0);
+        // (faded to nothing inside the item's inscribed circle, 2.2 half
+        // sizes out, so its square edge never shows)
+        float a = clamp(gl * 0.85 * exp(-dd / 0.55), 0.0, 1.0) * (1.0 - smoothstep(0.72, 0.98, length(p) / (2.2 * 1.5)));
         fragColor = vec4(gold * a, a) * qt_Opacity;
         return;
     }

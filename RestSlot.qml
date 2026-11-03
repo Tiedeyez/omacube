@@ -34,13 +34,13 @@ Item {
   function draw(t, c, n, z) {
     turn = t; colours = c; size = z || 3; pieces = n; piece = 0; done = false; drawing = true
     stripLo = 0; stripHi = 1 / n
-    cache.scheduleUpdate()
+    cacheSource.scheduleUpdate()
   }
   function invalidate() { done = false; drawing = false }
-  Timer { id: nextPiece; interval: 0; onTriggered: cache.scheduleUpdate() }
+  Timer { id: nextPiece; interval: 0; onTriggered: cacheSource.scheduleUpdate() }
   // as Service.qml's centred(): wrapped into [-panPeriod/2, panPeriod/2)
   readonly property real pan: (((turn * 30 * aspect + panShift + panPeriod / 2) % panPeriod) + panPeriod) % panPeriod - panPeriod / 2
-  readonly property alias cache: cache
+  readonly property alias cache: cacheSource
 
   ShaderEffect {
     id: map
@@ -80,7 +80,7 @@ Item {
     property vector3d restPans; property vector3d restOk
     property vector4d wave; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg; property vector4d egg; property vector4d eggFx
     property vector2d strip: Qt.vector2d(slot.stripLo, slot.stripHi)
-    property var rest: cache             // its own last contents, kept outside the strip
+    property var rest: cacheSource       // its own last contents, kept outside the strip
     property var rest1: slot.mosaic; property var rest2: slot.mosaic
     property var motion: slot.mosaic
     property real time: 0
@@ -100,7 +100,7 @@ Item {
     property color bgColor: slot.colours ? slot.colours.empty : "black"
   }
   ShaderEffectSource {
-    id: cache
+    id: cacheSource
     // nothing to draw until the slot is given a workspace
     sourceItem: slot.colours ? still : null
     hideSource: true

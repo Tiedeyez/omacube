@@ -298,7 +298,7 @@ A workspace switch slides the camera one screen width along rt, which lies in th
 
 **Checks.** Self-check 12 renders mid-slide positions live and from two shifted caches, to the right, to the left, in pixel art and on a monument. The same world spot reached from another pan rounds differently in its last bits, so a few tenths of a percent of pixels differ by 1/255. Not counting differences of 1 or 2/255, they match except for edge pixels beside a moving cube, as in self-check 10.
 
-On the HD 520 at 1600x900, a run of slides one second apart went from 8.5 to about 40 frames a second; the slides themselves run at the display's 60 Hz with an occasional 33 ms frame, and the eight strip frames after each one take 25 to 55 ms.
+On the HD 520 at 1600x900, with a workspace switch every second, the frames during each slide average 28 to 30 ms (about 35 a second; about 39 with a switch every 1.5 s; 9 a second when every pixel was drawn live), and the copying alone runs at the display's 60 Hz. The eight strip frames after a slide take 25 to 55 ms. (Measured in the final 0.4.0, with sizes and the theme wave: about 10% slower than before them, from the extra shading.)
 
 ## 22. The theme wave
 
@@ -335,6 +335,8 @@ A base scramble of up to 20 slice moves leaves a big cube mostly solved with a f
 **Physics.** Its orientation is a quaternion. A drag around it turns it about the axis perpendicular to the drag; let go while moving and it keeps that angular velocity, slowed by friction (e^(−1.6 t)). It bobs gently while it floats. Turns use the wall's flick (section 6) in 0.2 s; when a turn ends, the new state is painted while the slab is held at 90 degrees, which looks the same, so there is no flicker.
 
 **Moves.** `egg.js` holds the state as every sticker's colour by where it sits now, and a turn moves the stickers on its layer with the shaders' own quarter turn (rot90). A face key finds the cube axis whose face looks most towards that direction on screen, so R is always the face on your right however the cube is turned, and turns it clockwise as seen from that face; a drag on a sticker picks the face axis that best follows the drag on screen and turns the layer that moves the sticker that way. `tools/check-egg.mjs` checks all of it: rot90 is the shaders' turn, every sticker has one place for n = 3 … 17, four turns and a turn with its inverse change nothing, scrambles stay legal (n² of each colour), R, U and F follow standard notation, and 394 random picks and drags on random orientations hit a face towards the viewer and move the sticker along the drag. `dev/egg-test.sh` opens the egg without a mouse, turns R U U′ R′, and saves frames: the cube returns exactly to the state it was picked in, and that state matches the wall cube sticker for sticker.
+
+**Solved.** After each of your turns the state is checked (every face one colour). When it is solved, the cube hops (a half sine, 0.7 s), pops 14% bigger and back, and is given a spin of 13 rad/s about the vertical, which the same friction as a fling slows (about 1.3 turns in all); it pulses gold, a ring spreads out from it, and 90 pieces of confetti in the six sticker colours fly out under gravity, tumbling and fading over about 2.5 s. The banner gives your moves and time. `dev/egg-test.sh` sets a solved cube, turns F and F′, and checks the banner.
 
 **Cost.** None while you are not playing: the pick pass runs once per double-click, and the egg's code in the main shader left the HD 520 at 77% busy at 24 fps. While you play, the wall goes on drawing as usual under the overlay.
 
