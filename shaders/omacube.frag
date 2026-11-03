@@ -34,7 +34,7 @@ layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
     float qt_Opacity;
     float time;     // seconds, wrapped by the host every 4189.5 s (70 min)
-    float pan;      // camera position along screen-right, world units, in [0, 3072 * 3 sqrt 2)
+    float pan;      // camera position along screen-right, world units, in [-1, 1) * 3072 * 3 sqrt 2 / 2
     float aspect;   // width / height
     float texel;    // 1 / rendered height in pixels
     float pixelArt; // 1: hard pixel edges and pixel-snapped panning; 0: smooth
@@ -51,6 +51,9 @@ layout(std140, binding = 0) uniform buf {
     float mapPass;  // 1: draw the height map, 2: the motion map, instead of the picture
     float restPass; // 1: draw the stack at rest (no bursts, no pops) for the rest cache
     float useRest;  // 1: pixels nothing moves near are copied from the rest cache
+    vec3 restPans;  // the pan each of the three rest caches was drawn at
+    vec3 restOk;    // 1 where that cache is drawn and current
+    vec2 strip;     // rest pass: draw x in [strip.x, strip.y), copy the rest of the cache
 };
 // The 20 mosaic states (tools/build-mosaic.py): row k holds cube k's 54
 // sticker colours as index * 32, at x = face * 9 + (u + 1) * 3 + (v + 1).
@@ -67,12 +70,17 @@ layout(binding = 3) uniform sampler2D rest;
 // Same layout as the height map; this shader draws it every frame, in a
 // tiny pass of its own (mapPass = 2).
 layout(binding = 4) uniform sampler2D motion;
+// Two more rest caches, usually the neighbouring workspaces', so a workspace
+// slide copies the picture too (MATH.md, "Slides from the cache").
+layout(binding = 5) uniform sampler2D rest1;
+layout(binding = 6) uniform sampler2D rest2;
 
 const float HALF_PI = 1.5707963;
 const float P = 3.0;          // lattice pitch: neighbouring cubes touch
 const float H = 0.5;          // cubie half size, so a cube spans -1.5 .. 1.5
 const float R = 2.5980762;    // a cube's circumradius, 1.5 * sqrt(3)
 const float VIEW = 15.0;      // half the screen height, world units
+const float PAN_PERIOD = 13033.3921908;  // 3072 * 3 sqrt 2: the slide wraps here
 const float FILL = 0.92;      // chance a cell in the top four layers is switched on
 const float SLOT = 0.95;      // seconds per move slot at speed 8/8
 const float TURN = 0.6;       // fraction of a move's time spent turning
@@ -828,6 +836,12 @@ void main() {
     // centre is the same number in both passes.
     vec2 res = vec2(aspect, 1.0) / texel;
     vec2 tc = (floor(qt_TexCoord0 * res) + 0.5) / res;
+    // A cache is drawn a strip per frame; outside the strip it keeps what it
+    // holds (rest, here, is the cache itself).
+    if (restPass > 0.5 && (tc.x < strip.x || tc.x >= strip.y)) {
+        fragColor = texture(rest, tc);
+        return;
+    }
     vec2 uv = (tc - 0.5) * vec2(aspect, -1.0) * (2.0 * VIEW);
 
     // Orthographic camera down the (1,1,1) diagonal. rt, up and fw are
@@ -903,8 +917,17 @@ void main() {
         return;
 #endif
         if (!dyn) {
-            fragColor = texture(rest, tc) * qt_Opacity;
-            return;
+            // A cache drawn at another pan holds the same picture shifted
+            // sideways by the difference (the camera slides in its own
+            // plane), so during a slide each pixel reads whichever cache
+            // covers it. At rest the difference is exactly 0.
+            vec3 sS = pixelArt > 0.5 ? floor(restPans / px + 0.5) * px : restPans;
+            vec3 d = slide - sS;
+            d -= PAN_PERIOD * floor(d / PAN_PERIOD + 0.5);
+            vec3 x = tc.x + d / (2.0 * VIEW * aspect);
+            if (restOk.x > 0.5 && x.x >= 0.0 && x.x < 1.0) { fragColor = texture(rest, vec2(x.x, tc.y)) * qt_Opacity; return; }
+            if (restOk.y > 0.5 && x.y >= 0.0 && x.y < 1.0) { fragColor = texture(rest1, vec2(x.y, tc.y)) * qt_Opacity; return; }
+            if (restOk.z > 0.5 && x.z >= 0.0 && x.z < 1.0) { fragColor = texture(rest2, vec2(x.z, tc.y)) * qt_Opacity; return; }
         }
     }
 

@@ -33,6 +33,7 @@ ShellRoot {
     }
 
     function wrap(x, m) { return ((x % m) + m) % m }
+    function centred(x, m) { return wrap(x + m / 2, m) - m / 2 }
 
     PanelWindow {
         id: win
@@ -59,9 +60,10 @@ ShellRoot {
             fragmentShader: "file://" + Quickshell.env("OMACUBE_QSB")
             property var mosaic: mosaicData
             property var heights: mosaicData        // unused in this pass, like these
-            property var rest: mosaicData
+            property var rest: mosaicData; property var rest1: mosaicData; property var rest2: mosaicData
             property var motion: mosaicData
             property real restPass: 0; property real useRest: 0
+            property vector3d restPans; property vector3d restOk; property vector2d strip
             property real time; property real pan; property real aspect; property real texel; property real pixelArt
             property color c0; property color c1; property color c2; property color c3; property color c4; property color c5
             property color bodyColor; property color bgColor
@@ -80,6 +82,8 @@ ShellRoot {
             property vector2d hSize: heightMap.hSize
             property real mapPass: 2
             property real restPass: 0; property real useRest: 0
+            property vector3d restPans; property vector3d restOk; property vector2d strip
+            property var rest1: mosaicData; property var rest2: mosaicData
             width: hSize.x; height: hSize.y
             blending: false
             fragmentShader: heightMap.fragmentShader
@@ -96,33 +100,22 @@ ShellRoot {
             layer.textureSize: Qt.size(hSize.x, hSize.y)
         }
 
-        // the rest cache pass, as in Service.qml: every cube at rest
-        ShaderEffect {
-            id: restFx
-            width: fx.width; height: fx.height
-            blending: false
-            fragmentShader: fx.fragmentShader
-            property var heights: heightMap
-            property vector2d hOrigin: heightMap.hOrigin
-            property vector2d hSize: heightMap.hSize
-            property real mapPass: 0
-            property real restPass: 1
-            property real useRest: 0
-            property var rest: mosaicData
-            property var motion: mosaicData
-            property real time: 0             // the rest pass has no clock
-            property real pan: fx.pan
-            property real aspect: fx.aspect
-            property var mosaic: mosaicData
-            property real texel: fx.texel
-            property real pixelArt: fx.pixelArt
-            property color c0: fx.c0; property color c1: fx.c1; property color c2: fx.c2
-            property color c3: fx.c3; property color c4: fx.c4; property color c5: fx.c5
-            property color bodyColor: fx.bodyColor; property color bgColor: fx.bgColor
-            layer.enabled: true
-            layer.smooth: false
-            layer.textureSize: Qt.size(root.w, root.h)
+        // The rest caches: Service.qml's own RestSlot. OMACUBE_REST=1 draws
+        // one per workspace in OMACUBE_REST_TURNS (default: this one), in
+        // OMACUBE_REST_PIECES strips (default 8), before the first frame.
+        readonly property bool useCache: Quickshell.env("OMACUBE_REST") === "1"
+        readonly property var restTurns: (Quickshell.env("OMACUBE_REST_TURNS") || String(Math.round(root.turns))).split(",").map(Number)
+        readonly property int pieces: parseInt(Quickshell.env("OMACUBE_REST_PIECES") || "8")
+        readonly property var slots: [slotA, slotB, slotC]
+        readonly property bool cacheDone: !useCache || ((restTurns.length < 1 || slotA.done) && (restTurns.length < 2 || slotB.done) && (restTurns.length < 3 || slotC.done))
+        function drawNext() {
+            for (var i = 0; i < restTurns.length && i < 3; i++)
+                if (!slots[i].done && !slots[i].drawing) { slots[i].draw(restTurns[i], root.palette, pieces); return }
         }
+        RestSlot { id: slotA; onDrawn: win.drawNext(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: root.w; texH: root.h; fxW: fx.width; fxH: fx.height; panPeriod: 3072 * 3 * Math.SQRT2; panShift: root.panOffset; mosaic: mosaicData; shader: fx.fragmentShader }
+        RestSlot { id: slotB; onDrawn: win.drawNext(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: root.w; texH: root.h; fxW: fx.width; fxH: fx.height; panPeriod: 3072 * 3 * Math.SQRT2; panShift: root.panOffset; mosaic: mosaicData; shader: fx.fragmentShader }
+        RestSlot { id: slotC; onDrawn: win.drawNext(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: root.w; texH: root.h; fxW: fx.width; fxH: fx.height; panPeriod: 3072 * 3 * Math.SQRT2; panShift: root.panOffset; mosaic: mosaicData; shader: fx.fragmentShader }
+        Timer { interval: 300; running: win.useCache; onTriggered: win.drawNext() }
 
         ShaderEffect {
             id: fx
@@ -135,14 +128,19 @@ ShellRoot {
             property vector2d hSize: heightMap.hSize
             property real mapPass: 0
             property real restPass: 0
-            // OMACUBE_REST=1: copy pixels nothing moves near from the rest cache
-            property real useRest: Quickshell.env("OMACUBE_REST") === "1" ? 1 : 0
-            property var rest: restFx
+            // OMACUBE_REST=1: copy pixels nothing moves near from the rest caches
+            property real useRest: win.useCache ? 1 : 0
+            property vector3d restOk: Qt.vector3d(slotA.done ? 1 : 0, slotB.done ? 1 : 0, slotC.done ? 1 : 0)
+            property vector3d restPans: Qt.vector3d(slotA.pan, slotB.pan, slotC.pan)
+            property vector2d strip
+            property var rest: slotA.cache
+            property var rest1: slotB.cache
+            property var rest2: slotC.cache
             property var motion: motionMap
             // same formulas as Service.qml
             readonly property real clock: root.wrap(root.t0 + root.frame / root.fps, 4189.5)
             property real time: root.wrap(clock, 4189.5) + root.timeOffset
-            property real pan: root.wrap(root.turns * 30 * aspect, 3072 * 3 * Math.SQRT2) + root.panOffset
+            property real pan: root.centred(root.turns * 30 * aspect, 3072 * 3 * Math.SQRT2) + root.panOffset
             property real aspect: width / height
             property var mosaic: mosaicData
             Image { id: mosaicData; source: Qt.resolvedUrl("mosaic.png"); visible: false; smooth: false; asynchronous: false }
@@ -160,7 +158,7 @@ ShellRoot {
             property color bgColor: root.palette.empty
         }
 
-        Timer { interval: 600; running: true; onTriggered: root.grab() }
+        Timer { interval: 600; running: win.cacheDone; onTriggered: root.grab() }
     }
 
     function grab() {

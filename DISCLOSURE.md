@@ -4,7 +4,7 @@ What Omacube puts on your computer, written from the source at this commit.
 
 ## What it is and what runs it
 
-Omacube is an Omarchy shell plugin of kind `service`. Its entry point, `Service.qml`, runs inside `omarchy-shell` (Quickshell) **with your user account's full access, unsandboxed**, like every Omarchy plugin. It loads only after you enable it.
+Omacube is an Omarchy shell plugin of kind `service`. Its entry point, `Service.qml` (with `RestSlot.qml`, the rest cache it uses), runs inside `omarchy-shell` (Quickshell) **with your user account's full access, unsandboxed**, like every Omarchy plugin. It loads only after you enable it.
 
 ## What it needs
 
@@ -37,7 +37,7 @@ One layer-shell surface per screen, namespace `tiedeyez-omacube`, on the `bottom
 
 ## Subprocesses
 
-None. `Service.qml` uses no `Process`, no `execDetached` and no shell.
+None. `Service.qml` and `RestSlot.qml` use no `Process`, no `execDetached` and no shell.
 
 ## Network
 
@@ -74,11 +74,11 @@ Tiedeyez, MIT licence (see [LICENSE](LICENSE)).
 
 ```bash
 # the running plugin starts no processes, opens no sockets and writes nothing:
-grep -nE "Process|execDetached|XMLHttpRequest|Socket|saveToFile|setText" Service.qml Palette.js
+grep -nE "Process|execDetached|XMLHttpRequest|Socket|saveToFile|setText" Service.qml RestSlot.qml Palette.js
 # expected: no output
 
 # its only file reads are the two theme files listed above, plus its own mosaic.png:
-grep -nE "FileView|path:|source:|Quickshell.env" Service.qml
+grep -nE "FileView|path:|source:|Quickshell.env" Service.qml RestSlot.qml
 
 # rebuild the shader from source and compare:
 tools/build-shader.sh && git status --short shaders/

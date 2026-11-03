@@ -8,8 +8,9 @@
 8 uses 1e-5: a pixel or two on silhouettes where the two ways of drawing
 sample a depth edge differently; a missed cube would show across its stickers).
 
-  tools/png-stats.py --same a.png b.png [FRACTION]
-      fails if more than FRACTION (default 0) of the pixels differ at all
+  tools/png-stats.py --same a.png b.png [FRACTION [BELOW]]
+      fails if more than FRACTION (default 0) of the pixels differ by more
+      than BELOW/255 (default 0: at all)
   tools/png-stats.py --same-mask a.png b.png   (debug mode 10 frames: live mask only)
 
 Prints, per file: pixels, magenta (a failed check), pure blue (a ray that
@@ -82,7 +83,7 @@ def diff(a_path, b_path):
     return total / (3 * n), changed / n
 
 
-def same(a_path, b_path, allow):
+def same(a_path, b_path, allow, below=0):
     wa, ha, ba, ra = read_png(a_path)
     wb, hb, bb, rb = read_png(b_path)
     if (wa, ha) != (wb, hb):
@@ -91,11 +92,11 @@ def same(a_path, b_path, allow):
     for row_a, row_b in zip(ra, rb):
         for x in range(wa):
             d = max(abs(row_a[x * ba + k] - row_b[x * bb + k]) for k in range(3))
-            changed += d > 0
+            changed += d > below
             worst = max(worst, d)
     frac = changed / (wa * ha)
     ok = frac <= allow
-    print(f"{b_path}: {changed} px differ ({100.0 * frac:.4f}%), largest {worst}/255"
+    print(f"{b_path}: {changed} px differ{f' by more than {below}/255' if below else ''} ({100.0 * frac:.4f}%), largest {worst}/255"
           f" -> {'ok' if ok else 'FAIL'}")
     return 0 if ok else 1
 
@@ -121,8 +122,9 @@ def same_mask(a_path, b_path):
 def main():
     if len(sys.argv) == 4 and sys.argv[1] == "--same-mask":
         return same_mask(sys.argv[2], sys.argv[3])
-    if len(sys.argv) in (4, 5) and sys.argv[1] == "--same":
-        return same(sys.argv[2], sys.argv[3], float(sys.argv[4]) if len(sys.argv) == 5 else 0.0)
+    if len(sys.argv) in (4, 5, 6) and sys.argv[1] == "--same":
+        return same(sys.argv[2], sys.argv[3], float(sys.argv[4]) if len(sys.argv) >= 5 else 0.0,
+                    int(sys.argv[5]) if len(sys.argv) == 6 else 0)
     if len(sys.argv) == 4 and sys.argv[1] == "--diff":
         diff(sys.argv[2], sys.argv[3])
         return 0

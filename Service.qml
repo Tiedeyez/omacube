@@ -138,6 +138,9 @@ Item {
   readonly property real panPeriod: 3072 * 3 * Math.SQRT2
 
   function wrap(x, m) { return ((x % m) + m) % m }
+  // pan wraps into [-m/2, m/2): near turn 0, either way, world coordinates
+  // stay small and float32 keeps sticker edges exact
+  function centred(x, m) { return wrap(x + m / 2, m) - m / 2 }
 
   readonly property bool anyVisible: {
     var ws = screenWindows.instances
@@ -259,7 +262,8 @@ Item {
         property vector2d hSize: Qt.vector2d(Math.ceil(2 * halfU) + 14, Math.ceil(halfU + 15 * 0.81649658) + 14)
         property real mapPass: 1
         property real restPass: 0; property real useRest: 0
-        property var rest: mosaicData
+        property vector3d restPans; property vector3d restOk; property vector2d strip
+        property var rest: mosaicData; property var rest1: mosaicData; property var rest2: mosaicData
         property var motion: mosaicData
         width: hSize.x; height: hSize.y
         blending: false
@@ -284,6 +288,8 @@ Item {
         property vector2d hSize: heightMap.hSize
         property real mapPass: 2
         property real restPass: 0; property real useRest: 0
+        property vector3d restPans; property vector3d restOk; property vector2d strip
+        property var rest1: mosaicData; property var rest2: mosaicData
         width: hSize.x; height: hSize.y
         blending: false
         fragmentShader: heightMap.fragmentShader
@@ -300,68 +306,53 @@ Item {
         layer.textureSize: Qt.size(hSize.x, hSize.y)
       }
 
-      // The rest cache: the same picture with every cube at rest, drawn by
-      // the same shader (restPass = 1) into a texture of the canvas's size.
-      // Most of the screen is still at any moment (cubes take turns to move),
-      // so the picture copies those pixels from it and ray-marches only
-      // where a cube is mid-burst or the word is out (MATH.md, "The rest
-      // cache"). It has no clock, so it redraws only when the camera, the
-      // colours or the size change. During a workspace slide, a theme
-      // crossfade, and for a moment after either, every pixel is drawn live.
+      // The rest caches (RestSlot above). Most of the screen is still at any
+      // moment (cubes take turns to move), so the picture copies those
+      // pixels from a cache and ray-marches only where a cube is mid-burst or
+      // the word is out (MATH.md, "The rest cache"). The three caches hold
+      // this workspace and both neighbours, so a slide copies them too,
+      // shifted (MATH.md, "Slides from the cache"). After a slide settles,
+      // the one missing neighbour is drawn; after a theme change, all three,
+      // one at a time. During a theme crossfade every pixel is drawn live.
       readonly property bool sliding: root.turnPos !== root.turns
-      readonly property bool restStale: sliding || colorFade.running
-      property bool restReady: false
-      function restInvalidate() { restReady = false; restSettle.restart() }
-      onRestStaleChanged: restInvalidate()
-      Timer {
-        id: restSettle
-        interval: 150
-        running: true
-        onTriggered: panel.restReady = !panel.restStale
+      readonly property var slots: [slotA, slotB, slotC]
+      function slotOk(s) { return s.done && s.colours === root.palette && !colorFade.running }
+      function restPlan() {
+        if (sliding || colorFade.running) return
+        for (var k = 0; k < 3; k++) if (slots[k].drawing) return   // one at a time
+        var want = [root.turns, root.turns + 1, root.turns - 1]
+        for (var i = 0; i < want.length; i++) {
+          var held = false
+          for (var j = 0; j < 3; j++) if (slots[j].turn === want[i] && slotOk(slots[j])) held = true
+          if (held) continue
+          var pick = null
+          for (j = 0; j < 3 && !pick; j++) if (!slotOk(slots[j])) pick = slots[j]
+          for (j = 0; j < 3 && !pick; j++) if (want.indexOf(slots[j].turn) < 0) pick = slots[j]
+          // this workspace's picture at once, a neighbour's a strip a frame
+          pick.draw(want[i], root.palette, i === 0 ? 1 : 8)
+          return
+        }
+      }
+      Timer { id: restStagger; interval: 100; onTriggered: panel.restPlan() }
+      function restReset() {
+        for (var k = 0; k < 3; k++) slots[k].invalidate()
+        restSettle.restart()
       }
       Connections {
         target: canvas
-        function onTexWChanged() { panel.restInvalidate() }
-        function onTexHChanged() { panel.restInvalidate() }
-        function onPixelArtChanged() { panel.restInvalidate() }
+        function onTexWChanged() { panel.restReset() }
+        function onTexHChanged() { panel.restReset() }
+        function onPixelArtChanged() { panel.restReset() }
       }
-      ShaderEffect {
-        id: restFx
-        width: canvas.width; height: canvas.height
-        blending: false
-        fragmentShader: fx.fragmentShader
-        property var heights: heightMap
-        property vector2d hOrigin: heightMap.hOrigin
-        property vector2d hSize: heightMap.hSize
-        property real mapPass: 0
-        property real restPass: 1
-        property real useRest: 0
-        property var rest: mosaicData
-        property var motion: mosaicData
-        property real time: 0
-        property real pan: 0
-        Binding on pan { value: fx.pan; when: !panel.sliding; restoreMode: Binding.RestoreNone }
-        property real aspect: fx.aspect
-        property var mosaic: mosaicData
-        property real texel: fx.texel
-        property real pixelArt: fx.pixelArt
-        property color c0: root.palette.stickers[0]
-        property color c1: root.palette.stickers[1]
-        property color c2: root.palette.stickers[2]
-        property color c3: root.palette.stickers[3]
-        property color c4: root.palette.stickers[4]
-        property color c5: root.palette.stickers[5]
-        property color bodyColor: root.palette.plastic
-        property color bgColor: root.palette.empty
+      Timer { id: restSettle; interval: 150; running: true; onTriggered: panel.restPlan() }
+      onSlidingChanged: if (!sliding) restSettle.restart()
+      Connections {
+        target: colorFade
+        function onRunningChanged() { if (!colorFade.running) restSettle.restart() }
       }
-      ShaderEffectSource {
-        id: restCache
-        sourceItem: restFx
-        hideSource: true
-        smooth: false
-        textureSize: Qt.size(canvas.texW, canvas.texH)
-        visible: false
-      }
+      RestSlot { id: slotA; onDrawn: restStagger.restart(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: canvas.texW; texH: canvas.texH; fxW: canvas.width; fxH: canvas.height; panPeriod: root.panPeriod; mosaic: mosaicData; shader: fx.fragmentShader }
+      RestSlot { id: slotB; onDrawn: restStagger.restart(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: canvas.texW; texH: canvas.texH; fxW: canvas.width; fxH: canvas.height; panPeriod: root.panPeriod; mosaic: mosaicData; shader: fx.fragmentShader }
+      RestSlot { id: slotC; onDrawn: restStagger.restart(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: canvas.texW; texH: canvas.texH; fxW: canvas.width; fxH: canvas.height; panPeriod: root.panPeriod; mosaic: mosaicData; shader: fx.fragmentShader }
 
       Item {
         id: canvas
@@ -394,12 +385,17 @@ Item {
           property vector2d hSize: heightMap.hSize
           property real mapPass: 0
           property real restPass: 0
-          property real useRest: panel.restReady ? 1 : 0
-          property var rest: restCache
+          property vector3d restOk: Qt.vector3d(panel.slotOk(slotA) ? 1 : 0, panel.slotOk(slotB) ? 1 : 0, panel.slotOk(slotC) ? 1 : 0)
+          property real useRest: restOk.x + restOk.y + restOk.z > 0 ? 1 : 0
+          property vector3d restPans: Qt.vector3d(slotA.pan, slotB.pan, slotC.pan)
+          property vector2d strip           // used by the rest pass only
+          property var rest: slotA.cache
+          property var rest1: slotB.cache
+          property var rest2: slotC.cache
           property var motion: motionMap
           property real time: panel.shownClock % root.cubeLoop
           // one screen width (2 * VIEW * aspect world units) per workspace
-          property real pan: root.wrap(root.turnPos * 30 * aspect, root.panPeriod)
+          property real pan: root.centred(root.turnPos * 30 * aspect, root.panPeriod)
           property real aspect: width / Math.max(1, height)
           // the word's 20 cube states, read texel by texel
           property var mosaic: mosaicData

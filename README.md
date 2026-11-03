@@ -146,7 +146,7 @@ On integrated graphics, an Intel HD 520 (Skylake, 2015) at 1600x900, GPU busy an
 | Pixel art (`pixelSize: 3`, `fps: 15`) | 15 | 59% at about 390 MHz |
 | Any full-screen animation, for comparison | | about 50% at about 390 MHz |
 
-Two things made the difference: a height map of the stack, and a cache of the picture at rest, so only the few cubes moving at any moment are drawn fresh ([MATH.md](MATH.md), sections 19 and 20).
+Two things made the difference: a height map of the stack, and a cache of the picture at rest, so only the few cubes moving at any moment are drawn fresh ([MATH.md](MATH.md), sections 19 and 20). The caches hold the neighbouring workspaces too, so workspace slides are copied the same way and run at the display's refresh rate (section 21).
 
 - It stops redrawing while a fullscreen window covers the screen, or tiled windows fill it.
 - Any animated wallpaper makes the compositor repaint the screen on every frame. On integrated graphics, pixel art at 15–20 fps is lightest.

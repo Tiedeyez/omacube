@@ -15,6 +15,7 @@ stage=$(mktemp -d "$PWD/frames/.preview.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 cp dev/preview.qml "$stage/shell.qml"
 cp Palette.js "$stage/Palette.js"
+cp RestSlot.qml "$stage/RestSlot.qml"
 cp mosaic.png "$stage/mosaic.png"
 OMACUBE_OUT=$out OMACUBE_FRAMES=${2:-1} OMACUBE_FPS=${3:-24} OMACUBE_T0=${4:-3} \
 OMACUBE_W=${5:-1920} OMACUBE_H=${6:-1080} OMACUBE_QSB=$qsb \

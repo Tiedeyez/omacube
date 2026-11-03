@@ -77,6 +77,24 @@ check_rest() {   # name, then env for both renders
 }
 for t in $times; do check_rest "t$t" OMACUBE_PAN=0; done
 for t in $mono_times; do check_rest "tm$t" OMACUBE_PAN=$mono_pan; done
+# self-check 12: a workspace slide drawn from the caches of the two
+# workspaces it passes between (shifted copies) matches a live render. The
+# same spot reached from another pan rounds differently in its last bits, so
+# pixels off by 1 or 2 / 255 are not counted; edge pixels by a moving cube
+# can differ more, as in self-check 10.
+echo "== self-check 12"
+check_slide() {   # name, turns, cached turns, then env for both renders
+  local name=$1 turns=$2 cached=$3; shift 3
+  env "$@" OMACUBE_TURNS=$turns dev/preview.sh "$out/slive-$name" 1 24 "$t" "$W" "$H" "$out/plain.qsb" >/dev/null
+  env "$@" OMACUBE_TURNS=$turns OMACUBE_REST=1 OMACUBE_REST_TURNS=$cached dev/preview.sh "$out/slide-$name" 1 24 "$t" "$W" "$H" "$out/plain.qsb" >/dev/null
+  /usr/bin/python3 -I tools/png-stats.py --same "$out/slive-$name/f00000.png" "$out/slide-$name/f00000.png" 0.001 2 || status=1
+}
+for t in ${slide_times:-2.37 46080.7}; do
+  check_slide "r$t" 0.375 0,1 OMACUBE_PAN=0
+  check_slide "l$t" -0.4 0,-1 OMACUBE_PAN=0
+  check_slide "p$t" 0.3 0,1 OMACUBE_PAN=0 OMACUBE_PIXEL=1
+done
+for t in ${mono_slide_times:-101.6}; do check_slide "m$t" 0.6 1,0 OMACUBE_PAN=$mono_pan; done
 echo "== self-check 5"
 dev/preview.sh "$out/loop-a" 1 24 2.37 "$W" "$H" >/dev/null
 OMACUBE_TIME_OFFSET=4189.5 dev/preview.sh "$out/loop-t" 1 24 2.37 "$W" "$H" >/dev/null
