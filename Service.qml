@@ -8,7 +8,8 @@ import Quickshell.Wayland
 import "Palette.js" as Palette
 
 // Omacube: an animated desktop background of an endless isometric stack of
-// 3x3 puzzle cubes that turn their layers and tumble, drawn flat by one
+// puzzle cubes (3x3x3, and every 2.5 minutes another size up to 17x17x17)
+// that turn their layers and tumble, drawn flat by one
 // fragment shader (shaders/omacube.frag) on a layer-shell surface per screen.
 // Every workspace switch slides the stack sideways one screen width, with the
 // windows. Free cubes slide out of the pile to turn, so no layer ever passes
@@ -48,6 +49,9 @@ Item {
   // the workspace (only the gaps between them show it), as it already does
   // under a fullscreen window. Workspace slides still play.
   readonly property bool defaultPauseUnderWindows: true
+  // cubeSizes: every 2.5 minutes the wall's cubes change size, between
+  // 3 x 3 x 3 and 17 x 17 x 17, in a wave. false: always 3 x 3 x 3.
+  readonly property bool defaultCubeSizes: true
 
   property var settings: ({})
   function setting(key, fallback, lo, hi) {
@@ -59,6 +63,8 @@ Item {
   readonly property int fps: setting("fps", defaultFps, 1, 60)
   readonly property bool pauseUnderWindows: typeof settings.pauseUnderWindows === "boolean"
     ? settings.pauseUnderWindows : defaultPauseUnderWindows
+  readonly property bool cubeSizes: typeof settings.cubeSizes === "boolean"
+    ? settings.cubeSizes : defaultCubeSizes
 
   function entryFrom(text) {
     try {
@@ -129,6 +135,20 @@ Item {
   readonly property real cubeLoop: 4189.5
   property real clock: 0
 
+  // ---- cube sizes ----------------------------------------------------------
+  // The wall's cubes share one size, n x n x n, which changes every 15 class
+  // windows (149.625 s): 28 sizes make exactly one loop, so the loop stays
+  // seamless. The order is shuffled, always a visible step, and covers every
+  // size from 3 to 17 (MATH.md, "Cube sizes").
+  readonly property var sizeTable: [3, 6, 4, 9, 5, 12, 7, 17, 10, 3, 8, 14, 6, 11,
+                                    4, 15, 9, 13, 5, 16, 7, 12, 3, 10, 6, 13, 8, 5]
+  readonly property real sizeEpoch: cubeLoop / sizeTable.length
+  readonly property int cubeN: cubeSizes ? sizeTable[Math.floor(clock / sizeEpoch) % sizeTable.length] : 3
+  property int previousSize: 3
+  property int lastSize: 3
+  signal sizeSwapped()
+  onCubeNChanged: { previousSize = lastSize; lastSize = cubeN; sizeSwapped() }
+
   // Net workspace steps; turnPos eases towards it. One step slides the field
   // one screen width sideways, with the windows, on the Omacube theme's own
   // workspace curve (cubeClick, 420 ms). The slide wraps every 3072 lattice
@@ -183,6 +203,7 @@ Item {
     lastWorkspace = id
   }
   Component.onCompleted: {
+    lastSize = cubeN
     workspaceMoved()
     if (pauseUnderWindows) Hyprland.refreshToplevels()
   }
@@ -267,6 +288,7 @@ Item {
         property real mapPass: 1
         property real restPass: 0; property real useRest: 0
         property vector3d restPans; property vector3d restOk; property vector2d strip
+        property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
         property var rest: mosaicData; property var rest1: mosaicData; property var rest2: mosaicData
         property var motion: mosaicData
         width: hSize.x; height: hSize.y
@@ -293,6 +315,7 @@ Item {
         property real mapPass: 2
         property real restPass: 0; property real useRest: 0
         property vector3d restPans; property vector3d restOk; property vector2d strip
+        property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
         property var rest1: mosaicData; property var rest2: mosaicData
         width: hSize.x; height: hSize.y
         blending: false
@@ -320,11 +343,12 @@ Item {
       // one at a time.
       readonly property bool sliding: root.turnPos !== root.turns
       readonly property var slots: [slotA, slotB, slotC]
-      // 1: drawn in the current theme; 2: in the theme a wave is replacing
+      // 1: drawn as the screen shows it now (theme and size); 2: as it was
+      // before the wave that is running
       function slotOk(s) {
         if (!s.done) return 0
-        if (s.colours === root.palette) return 1
-        return waving && s.colours === oldPalette ? 2 : 0
+        if (s.colours === showPalette && s.size === showSize) return 1
+        return waving && s.colours === fromPalette && s.size === fromSize ? 2 : 0
       }
       function restPlan() {
         if (sliding || waving) return
@@ -338,7 +362,7 @@ Item {
           for (j = 0; j < 3 && !pick; j++) if (slotOk(slots[j]) !== 1) pick = slots[j]
           for (j = 0; j < 3 && !pick; j++) if (want.indexOf(slots[j].turn) < 0) pick = slots[j]
           // this workspace's picture at once, a neighbour's a strip a frame
-          pick.draw(want[i], root.palette, i === 0 ? 1 : 8)
+          pick.draw(want[i], showPalette, i === 0 ? 1 : 8, showSize)
           return
         }
       }
@@ -356,22 +380,34 @@ Item {
       Timer { id: restSettle; interval: 150; running: true; onTriggered: panel.restPlan() }
       onSlidingChanged: if (!sliding) restSettle.restart()
 
-      // The theme wave (MATH.md, "The theme wave"). This workspace's picture
-      // is drawn in the new theme first, a strip a frame, while the screen
-      // still copies the old one; then a front sweeps across in 1.8 s and
-      // every sticker it passes flips over to the new colour. Ahead of the
-      // front the old picture is copied, behind it the new one, and only a
-      // band around the front is drawn live.
-      property var oldPalette: null      // the theme being replaced; null: no wave
-      readonly property bool waving: oldPalette !== null
+      // The theme and size waves (MATH.md, "The theme wave", "Cube sizes").
+      // This workspace's picture is drawn in the new state first, a strip a
+      // frame, while the screen still copies the old one; then a front
+      // sweeps across in 1.8 s: stickers flip over to a new theme, cubes
+      // shrink away and grow back at a new size. Ahead of the front the old
+      // picture is copied, behind it the new one, and only a band around the
+      // front is drawn live. A change that comes during a wave waits for it.
+      // Cubes never get so small that a sticker is under about 4 pixels.
+      function fitSize(n) { return Math.max(3, Math.min(n, Math.floor(canvas.texH / 40))) }
+      property var fromPalette: null
+      property int fromSize: 3
+      property var toPalette: null        // null: no wave
+      property int toSize: 3
+      readonly property bool waving: toPalette !== null
+      readonly property var showPalette: waving ? toPalette : root.palette
+      readonly property int showSize: waving ? toSize : fitSize(root.cubeN)
       property real waveT: 0
       Connections {
         target: root
-        function onThemeSwapped() { panel.startWave(root.previousPalette) }
+        function onThemeSwapped() { if (!panel.waving) panel.transition(root.previousPalette, panel.fitSize(root.cubeN)) }
+        function onSizeSwapped() { if (!panel.waving) panel.transition(root.palette, panel.fitSize(root.previousSize)) }
       }
-      function startWave(previous) {
-        waveAnim.stop()
-        if (!waving) oldPalette = previous
+      function transition(prevPalette, prevSize) {
+        var nextSize = fitSize(root.cubeN)
+        if (prevPalette === root.palette && prevSize === nextSize) return
+        if (covered) { restSettle.restart(); return }    // nothing to see: just redraw
+        fromPalette = prevPalette; fromSize = prevSize
+        toSize = nextSize; toPalette = root.palette
         waveT = 0
         for (var k = 0; k < 3; k++)
           if (slots[k].turn === root.turns && slotOk(slots[k]) === 1) { waveAnim.start(); return }
@@ -379,7 +415,7 @@ Item {
         var pick = null
         for (k = 0; k < 3 && !pick; k++) if (!(slots[k].turn === root.turns && slotOk(slots[k]) === 2)) pick = slots[k]
         if (!pick) pick = slots[0]
-        pick.draw(root.turns, root.palette, 8)
+        pick.draw(root.turns, toPalette, 8, toSize)
       }
       function slotDrawn() {
         if (waving && !waveAnim.running) {
@@ -393,7 +429,14 @@ Item {
         id: waveAnim
         target: panel; property: "waveT"; from: 0; to: 1
         duration: 1800; easing.type: Easing.InOutSine
-        onFinished: { panel.oldPalette = null; panel.waveT = 0; restSettle.restart() }
+        onFinished: {
+          var shownPalette = panel.toPalette, shownSize = panel.toSize
+          panel.toPalette = null
+          panel.waveT = 0
+          // a change that came during the wave plays now
+          if (root.palette !== shownPalette || panel.fitSize(root.cubeN) !== shownSize) panel.transition(shownPalette, shownSize)
+          else restSettle.restart()
+        }
       }
       RestSlot { id: slotA; onDrawn: panel.slotDrawn(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: canvas.texW; texH: canvas.texH; fxW: canvas.width; fxH: canvas.height; panPeriod: root.panPeriod; mosaic: mosaicData; shader: fx.fragmentShader }
       RestSlot { id: slotB; onDrawn: panel.slotDrawn(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: canvas.texW; texH: canvas.texH; fxW: canvas.width; fxH: canvas.height; panPeriod: root.panPeriod; mosaic: mosaicData; shader: fx.fragmentShader }
@@ -452,17 +495,18 @@ Item {
           }
           property real texel: 1 / canvas.texH
           property real pixelArt: canvas.pixelArt ? 1 : 0
-          property color c0: root.palette.stickers[0]
-          property color c1: root.palette.stickers[1]
-          property color c2: root.palette.stickers[2]
-          property color c3: root.palette.stickers[3]
-          property color c4: root.palette.stickers[4]
-          property color c5: root.palette.stickers[5]
-          property color bodyColor: root.palette.plastic
-          property color bgColor: root.palette.empty
+          property color c0: panel.showPalette.stickers[0]
+          property color c1: panel.showPalette.stickers[1]
+          property color c2: panel.showPalette.stickers[2]
+          property color c3: panel.showPalette.stickers[3]
+          property color c4: panel.showPalette.stickers[4]
+          property color c5: panel.showPalette.stickers[5]
+          property color bodyColor: panel.showPalette.plastic
+          property color bgColor: panel.showPalette.empty
           // the theme wave: its progress, and the theme it is replacing
-          property vector4d wave: Qt.vector4d(panel.waveT, panel.waving ? 1 : 0, 0, 0)
-          readonly property var old: panel.oldPalette || root.palette
+          property vector4d wave: Qt.vector4d(panel.waveT, panel.waving ? 1 : 0, panel.waving && panel.fromSize !== panel.toSize ? 1 : 0, 0)
+          property vector4d sizes: Qt.vector4d(panel.showSize, panel.waving ? panel.fromSize : panel.showSize, 0, 0)
+          readonly property var old: panel.waving ? panel.fromPalette : panel.showPalette
           property color o0: old.stickers[0]
           property color o1: old.stickers[1]
           property color o2: old.stickers[2]

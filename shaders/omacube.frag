@@ -1,5 +1,6 @@
 #version 440
-// Omacube: an endless isometric stack of 3x3x3 puzzle cubes, drawn flat.
+// Omacube: an endless isometric stack of puzzle cubes, drawn flat: 3x3x3,
+// and every 2.5 minutes another size up to 17x17x17 (MATH.md, "Cube sizes").
 //
 // The camera is orthographic and looks straight down the (1,1,1) diagonal,
 // so a 3D stack of cubes reads as interlocking hexagonal stars. Every cube
@@ -54,7 +55,7 @@ layout(std140, binding = 0) uniform buf {
     vec3 restPans;  // the pan each of the three rest caches was drawn at
     vec3 restOk;    // 1 where that cache is drawn and current
     vec2 strip;     // rest pass: draw x in [strip.x, strip.y), copy the rest of the cache
-    vec4 wave;      // theme change: x = progress 0..1, y = 1 while it runs
+    vec4 wave;      // theme or size change: x = progress 0..1, y = 1 while it runs, z = 1 for a size change
     vec4 o0;        // the previous theme's colours, as c0 .. bgColor, while the wave runs
     vec4 o1;
     vec4 o2;
@@ -63,6 +64,7 @@ layout(std140, binding = 0) uniform buf {
     vec4 o5;
     vec4 oBody;
     vec4 oBg;
+    vec4 sizes;     // x: cubies along an edge of the wall's cubes (3 .. 17; 0 = 3), y: the old size during a size wave
 };
 // The 20 mosaic states (tools/build-mosaic.py): row k holds cube k's 54
 // sticker colours as index * 32, at x = face * 9 + (u + 1) * 3 + (v + 1).
@@ -328,30 +330,47 @@ float baseLen(vec3 key)  { return min(floor(hash13(key + vec3(2048.0, 2048.0, 0.
 
 // A move code v (0..19) decodes to: axis step 1 or 2 (consecutive moves never
 // share an axis, so no move cancels the one before), layer -1, 0, 1 or the
-// whole cube (2 in 5 moves), and direction +1 or -1. All exact.
+// whole cube (WHOLE, 2 in 5 moves), and direction +1 or -1. All exact.
+const float WHOLE = 99.0;
 void decode(float v, out float stp, out float layer, out float dir) {
     stp = imod(v, 2.0) + 1.0;
     float code = imod(floor(v * 0.5), 5.0);
-    layer = code < 2.5 ? code - 1.0 : 2.0;
+    layer = code < 2.5 ? code - 1.0 : WHOLE;
     dir = v < 9.5 ? 1.0 : -1.0;
 }
 
-float moveCode(float id, float seq, float j) { return min(floor(hash13(vec3(id, seq, j)) * 20.0), 19.0); }
+// A move's hash times 20: its whole part is the move code, and its fraction
+// picks the slice on a bigger cube.
+float moveHash(float id, float seq, float j) { return hash13(vec3(id, seq, j)) * 20.0; }
+float codeOf(float mh) { return min(floor(mh), 19.0); }
+float moveCode(float id, float seq, float j) { return codeOf(moveHash(id, seq, j)); }
+
+// On an n x n x n cube (MATH.md, "Cube sizes") a slice move turns any one of
+// the n layers, at centred coordinate -m .. m, m = (n - 1) / 2, chosen by
+// the fraction of the move's hash (no second hash); the 3 x 3 x 3 keeps the
+// layer the move code gives.
+float sliceOf(float layer, float n, float mh) {
+    if (layer > 50.0 || n < 3.5) return layer;
+    return min(floor((mh - floor(mh)) * n), n - 1.0) - 0.5 * (n - 1.0);
+}
 float firstAxis(float id, float seq) { return min(floor(hash13(vec3(id, seq, 63.0)) * 3.0), 2.0); }
 
 // The three moves of one burst. Geometry and colour both use this one
 // function, so they cannot disagree about which layer turned.
-void cycleMoves(float id, float seq, out vec3 ax, out vec3 ly, out vec3 dr) {
+void cycleMoves(float id, float seq, float n, out vec3 ax, out vec3 ly, out vec3 dr) {
     float stp, layer, dir;
     float a = firstAxis(id, seq);
-    decode(moveCode(id, seq, 0.0), stp, layer, dir);
-    ax.x = a; ly.x = layer; dr.x = dir;
-    decode(moveCode(id, seq, 1.0), stp, layer, dir);
+    float mh = moveHash(id, seq, 0.0);
+    decode(codeOf(mh), stp, layer, dir);
+    ax.x = a; ly.x = sliceOf(layer, n, mh); dr.x = dir;
+    mh = moveHash(id, seq, 1.0);
+    decode(codeOf(mh), stp, layer, dir);
     a = imod(a + stp, 3.0);
-    ax.y = a; ly.y = layer; dr.y = dir;
-    decode(moveCode(id, seq, 2.0), stp, layer, dir);
+    ax.y = a; ly.y = sliceOf(layer, n, mh); dr.y = dir;
+    mh = moveHash(id, seq, 2.0);
+    decode(codeOf(mh), stp, layer, dir);
     a = imod(a + stp, 3.0);
-    ax.z = a; ly.z = layer; dr.z = dir;
+    ax.z = a; ly.z = sliceOf(layer, n, mh); dr.z = dir;
 }
 
 // Move j of sequence seq (a base scramble or a mosaic scramble); homeOf()
@@ -396,6 +415,28 @@ void noMove(inout Cube c) {
     c.axis = 0.0; c.layer = 0.0; c.ang = 0.0; c.src = 0.0; c.idx = -1.0; c.sgn = 1.0;
 }
 
+// The size wave (MATH.md, "Cube sizes"): when the wall changes size, a
+// front sweeps the screen as the theme wave does, and each cube it passes
+// shrinks away at its old size and grows back at the new one. Deeper cubes
+// follow a little later (SIZE_LAG world units of the front's travel per unit
+// of coordinate sum), so the wall peels away layer by layer.
+const float SIZE_LAG = 0.4;
+float gSlide = 0.0;                     // the camera's slide, set by main()
+float wavePhaseAt(vec2 s);
+// A cube's (n, scale, phase). The word's cubes stay 3 x 3 x 3 for their
+// mosaic; every other cube, the monument's too, has the wall's size. Kept
+// out of the per-ray cube cache: an extra float there cost the HD 520 more
+// than working this out again.
+vec3 cubeSize(vec3 cid, float tex) {
+    if (tex > -0.5) return vec3(3.0, 1.0, 1.0);
+    float n = max(sizes.x, 3.0);
+    if (wave.y < 0.5 || wave.z < 0.5) return vec3(n, 1.0, 1.0);
+    vec3 cw = cid * P;
+    vec2 spot = vec2((cw.x - cw.z) * 0.70710678 - gSlide, dot(cw, vec3(-0.40824829, 0.81649658, -0.40824829)));
+    float ph = wavePhaseAt(spot - WAVE_DIR * SIZE_LAG * (cid.x + cid.y + cid.z));
+    return vec3(ph < 0.5 ? max(sizes.y, 3.0) : n, abs(cos(ph * 3.14159265)), ph);
+}
+
 // An ordinary cube. Once in each window of its class, at a random moment,
 // a free cube slides out, makes three moves, rests, undoes them, and
 // settles back. Outside that burst every cube rests at its base scramble, so
@@ -425,7 +466,7 @@ void ordinaryState(vec3 cid, vec3 key, inout Cube c) {
         else         { c.pre = 7.0 - k; c.idx = 6.0 - k; c.sgn = -1.0; }
 #if !defined(OMACUBE_STATIC)
         vec3 ax, ly, dr;
-        cycleMoves(c.id, c.cycKey, ax, ly, dr);
+        cycleMoves(c.id, c.cycKey, cubeSize(cid, -1.0).x, ax, ly, dr);
         c.axis = comp(ax, c.idx);
         c.layer = comp(ly, c.idx);
         c.ang = c.sgn * comp(dr, c.idx) * easeTurn(f / (TURN * sl)) * HALF_PI;
@@ -515,35 +556,64 @@ Cube cubeState(vec3 cid) {
     return c;
 }
 
-// Distance to one cube centred at the origin of q. The nearest cubie comes
-// from rounding to the grid and clamping to the cube; cubies touch (H = 0.5),
-// so this is exact everywhere outside the cube.
-float cubeSDF(vec3 q, float axis, float layer, float ang, out vec3 cell, out vec3 lp, out bool moving) {
+// A box of half sizes b, centred at the origin.
+float sdBox3(vec3 p, vec3 b) {
+    vec3 q = abs(p) - b;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+// The grid constants of an n x n x n cube at scale sc.
+vec4 gridOf(float n, float sc) {
+    float m = 0.5 * (n - 1.0);
+    return vec4(m, m - floor(m), n / (3.0 * sc), 3.0 * sc / n);
+}
+vec4 gGrid;                             // the wall's, set once by main()
+
+// cubeSDF for the cube in cell cid (tex: its mosaic state, or -1)
+// Distance to the cube in cell cid (tex: its mosaic state, or -1), from q in
+// its frame: n cubies along an edge, each 3 / n across (MATH.md, "Cube
+// sizes"). The cubies tile the cube, so from outside it is just boxes: the
+// whole cube; or, with a slab turning, the slab (rotated) and the blocks on
+// either side of it; or, tumbling, the whole cube rotated. This is exact
+// outside the cube and does not depend on n. The cubie hit is worked out
+// once, at the hit (cubieAt; cell.x = 9 marks it), and lp holds the hit
+// point in the frame of the piece hit.
+float cubeSDFOf(vec3 q, vec3 cid, float tex, float axis, float layer, float ang, out vec3 cell, out vec3 lp, out bool moving) {
+    vec3 z = tex > -0.5 ? vec3(3.0, 1.0, 1.0) : (wave.z > 0.5 ? cubeSize(cid, tex) : vec3(gGrid.x * 2.0 + 1.0, 1.0, 1.0));
+    float hb = 1.5 * z.y;                               // the cube's half size
+    cell = vec3(9.0);
     moving = false;
-    bool turning = abs(ang) > 1e-4;
-    if (turning && layer > 1.5) {                       // the whole cube tumbles
-        vec3 qr = rotA(q, axis, -ang);
-        cell = clamp(floor(qr + 0.5), -1.0, 1.0);
-        lp = qr - cell;
-        moving = true;
-        return sdBox(lp, H);
-    }
-    vec3 c = clamp(floor(q + 0.5), -1.0, 1.0);
-    if (turning && comp(c, axis) == layer) {
-        // that layer is drawn below; take the nearest layer that stays put
-        float other = layer == 0.0 ? (comp(q, axis) >= 0.0 ? 1.0 : -1.0) : 0.0;
-        c = setComp(c, axis, other);
+    lp = q;
+    if (abs(ang) <= 1e-4) return sdBox(q, hb);
+    vec3 qr = rotA(q, axis, -ang);
+    if (layer > 50.0) { moving = true; lp = qr; return sdBox(qr, hb); }
+    float k = 3.0 * z.y / z.x;                          // a cubie's size
+    float lo = (layer - 0.5) * k;                       // the slab spans lo .. lo + k along axis
+    float qa = comp(q, axis);
+    float d = 1e9;
+    if (lo > -hb + 1e-3)                                // the block below it
+        d = sdBox3(setComp(q, axis, qa - 0.5 * (lo - hb)), setComp(vec3(hb), axis, 0.5 * (lo + hb)));
+    if (lo + k < hb - 1e-3)                             // and above
+        d = min(d, sdBox3(setComp(q, axis, qa - 0.5 * (lo + k + hb)), setComp(vec3(hb), axis, 0.5 * (hb - lo - k))));
+    float ds = sdBox3(setComp(qr, axis, comp(qr, axis) - layer * k), setComp(vec3(hb), axis, 0.5 * k));
+    if (ds < d) { moving = true; lp = qr; return ds; }
+    return d;
+}
+
+// The cubie at a hit (cell.x = 9: not yet known), from lp, the hit point in
+// the frame of the piece hit. On the turning slab (ang != 0) it lies in the
+// slab's layer; on a block beside a turning slab (layer, ang = 0) it lies
+// outside it.
+void cubieAt(vec4 G, float axis, float layer, float ang, inout vec3 cell, inout vec3 lp) {
+    if (cell.x < 8.5) return;
+    vec3 g = lp * G.z;
+    vec3 c = clamp(floor(g + (0.5 - G.y)) + G.y, -G.x, G.x);
+    if (layer < 50.0) {
+        if (abs(ang) > 1e-4) c = setComp(c, axis, layer);
+        else if (comp(c, axis) == layer) c = setComp(c, axis, comp(g, axis) < layer ? layer - 1.0 : layer + 1.0);
     }
     cell = c;
-    lp = q - c;
-    float d = sdBox(lp, H);
-    if (turning) {
-        vec3 qr = rotA(q, axis, -ang);
-        vec3 cm = setComp(clamp(floor(qr + 0.5), -1.0, 1.0), axis, layer);
-        float dm = sdBox(qr - cm, H);
-        if (dm < d) { d = dm; cell = cm; lp = qr - cm; moving = true; }
-    }
-    return d;
+    lp = g - c;
 }
 
 struct Hit {
@@ -560,7 +630,11 @@ struct Hit {
     float pop;
     float axis;    // rotation of the cubie's frame (ang = 0: not moving)
     float ang;
+    float layer;   // the layer turning in the cube hit, or WHOLE if none
     float lift;    // how far the cube has slid out: it is nearer by lift * sqrt(3)
+    float n;       // cubies along an edge, and the cube's scale and size-wave phase
+    float sc;      // (filled in once the nearest hit is known: main())
+    float ph;
 #if defined(OMACUBE_DEBUG)
     float src;     // geometry's view of the move in progress
     float idx;
@@ -576,6 +650,7 @@ void fillHit(inout Hit hit, Cube cb, vec3 id, vec3 cell, vec3 lp, bool moving) {
     hit.id = cb.id; hit.cycKey = cb.cycKey; hit.pre = cb.pre; hit.nb = cb.nb;
     hit.tex = cb.tex; hit.rseq = cb.rseq; hit.pop = cb.pop;
     hit.axis = cb.axis; hit.ang = moving ? cb.ang : 0.0;
+    hit.layer = abs(cb.ang) > 1e-4 ? cb.layer : WHOLE;
     hit.lift = cb.lift;
 #if defined(OMACUBE_DEBUG)
     hit.src = cb.src; hit.idx = cb.idx; hit.sgn = cb.sgn;
@@ -631,13 +706,16 @@ float mapScene(vec3 p, out Hit hit) {
         }
         if (gKnown[i] < 1.5) continue;
         Cube cb = gCube[i];
-        if (cb.pop > 0.0) continue;                     // popped out of the wall: main() draws it
-        vec3 cell, lp;
-        bool moving;
-        float dc = cubeSDF(q, cb.axis, cb.layer, cb.ang, cell, lp, moving);
+        // A cube popped out of the wall, or slid out of the pile, is drawn
+        // by main() where it really is. Only those cubes ever turn, and a
+        // slid-out cube covers the same pixels it would in its cell, nearer,
+        // so the march can treat its cell as empty and measure every other
+        // cube as a plain box.
+        if (cb.pop > 0.0 || cb.lift > 0.0) continue;
+        float dc = sdBox(q, 1.5 * (wave.z > 0.5 && cb.tex < -0.5 ? cubeSize(id, cb.tex).y : 1.0));
         if (dc < d) {
             d = dc;
-            fillHit(hit, cb, id, cell, lp, moving);
+            fillHit(hit, cb, id, vec3(9.0), q, false);  // the cubie: cubieAt(), at the hit
         }
     }
 #if defined(OMACUBE_NO_FAR_BOUND)
@@ -651,19 +729,29 @@ float mapScene(vec3 p, out Hit hit) {
 
 // One cube on its own, centred off its cell by off: where along the ray it
 // is first hit.
+// A ray that grazes the edge of a turning slab crawls in small steps; as in
+// the main march, one that runs out of steps within a pixel of the cube is a
+// silhouette pixel and counts as a hit (before, it showed whatever was
+// behind, as a thin coloured line along the slab's edge).
+float gPx = 0.0;                        // world units per pixel, set by main()
 bool traceCube(vec3 id, Cube cb, vec3 off, vec3 ro, vec3 fw, inout Hit hit, out float t) {
     vec3 c = id * P + off;
     float tc = dot(c - ro, fw);
     t = tc - R;
+    float d = 1.0;
+    vec3 cell, lp;
+    bool moving;
+    bool got = false;
+    bool left = false;
     for (int i = 0; i < 64; i++) {
-        vec3 cell, lp;
-        bool moving;
-        float d = cubeSDF(ro + fw * t - c, cb.axis, cb.layer, cb.ang, cell, lp, moving);
-        if (d < EPS) { fillHit(hit, cb, id, cell, lp, moving); return true; }
+        d = cubeSDFOf(ro + fw * t - c, id, cb.tex, cb.axis, cb.layer, cb.ang, cell, lp, moving);
+        if (d < EPS) { got = true; break; }
         t += d;
-        if (t > tc + R) return false;
+        if (t > tc + R) { left = true; break; }
     }
-    return false;
+    got = got || (!left && d < gPx);
+    if (got) fillHit(hit, cb, id, cell, lp, moving);
+    return got;
 }
 
 #if defined(OMACUBE_DEBUG)
@@ -698,7 +786,7 @@ float mapSceneSlid(vec3 p, out Hit hit) {
         if (cb.pop > 0.0) continue;
         vec3 cell, lp;
         bool moving;
-        float dc = cubeSDF(p - id * P - vec3(cb.lift), cb.axis, cb.layer, cb.ang, cell, lp, moving);
+        float dc = cubeSDFOf(p - id * P - vec3(cb.lift), id, cb.tex, cb.axis, cb.layer, cb.ang, cell, lp, moving);
         if (dc < d) {
             d = dc;
             fillHit(hit, cb, id, cell, lp, moving);
@@ -716,7 +804,7 @@ float mapSceneSlid(vec3 p, out Hit hit) {
             Cube cb = cubeState(cid);
             vec3 cell, lp;
             bool moving;
-            float dc = cubeSDF(p - cid * P - vec3(cb.pop, 0.0, 0.0), cb.axis, cb.layer, cb.ang, cell, lp, moving);
+            float dc = cubeSDFOf(p - cid * P - vec3(cb.pop, 0.0, 0.0), cid, cb.tex, cb.axis, cb.layer, cb.ang, cell, lp, moving);
             if (dc < d) {
                 d = dc;
                 fillHit(hit, cb, cid, cell, lp, moving);
@@ -757,10 +845,12 @@ float waveFront() {
 }
 // How far through its flip a sticker centred at screen spot s is: 0 not
 // started, 1 done (also when no wave runs).
+float gFront = 0.0;                     // waveFront(), worked out once by main()
 float wavePhase(vec2 s) {
     if (wave.y < 0.5) return 1.0;
-    return clamp((waveFront() - dot(s, WAVE_DIR)) / WAVE_B, 0.0, 1.0);
+    return clamp((gFront - dot(s, WAVE_DIR)) / WAVE_B, 0.0, 1.0);
 }
+float wavePhaseAt(vec2 s) { return wavePhase(s); }
 
 // The colour index mosaic state k has at sticker slot (c, n).
 float mosaicIndex(float k, vec3 c, vec3 n) {
@@ -777,7 +867,7 @@ vec3 stickerColor(vec3 n, bool old) {
 
 // Undo one quarter turn if the cubie at c is part of it.
 void undoMove(inout vec3 c, inout vec3 n, float axis, float layer, float dir) {
-    if (layer > 1.5 || abs(comp(c, axis) - layer) < 0.5) {
+    if (layer > 50.0 || abs(comp(c, axis) - layer) < 0.25) {
         c = rot90(c, axis, -dir);
         n = rot90(n, axis, -dir);
     }
@@ -791,7 +881,7 @@ void undoMove(inout vec3 c, inout vec3 n, float axis, float layer, float dir) {
 void homeOf(Hit h, inout vec3 c, inout vec3 n) {
     if (h.pre > 0.5) {
         vec3 ax, ly, dr;
-        cycleMoves(h.id, h.cycKey, ax, ly, dr);
+        cycleMoves(h.id, h.cycKey, h.n, ax, ly, dr);
         if (h.pre > 2.5) undoMove(c, n, ax.z, ly.z, dr.z);
         if (h.pre > 1.5) undoMove(c, n, ax.y, ly.y, dr.y);
         undoMove(c, n, ax.x, ly.x, dr.x);
@@ -804,9 +894,10 @@ void homeOf(Hit h, inout vec3 c, inout vec3 n) {
     float a = firstAxis(h.id, seq);
     for (int j = 0; j < 20; j++) {
         if (float(j) >= h.nb) break;
-        decode(moveCode(h.id, seq, float(j)), stp, layer, dir);
+        float mh = moveHash(h.id, seq, float(j));
+        decode(codeOf(mh), stp, layer, dir);
         if (j > 0) a = imod(a + stp, 3.0);              // consecutive moves change axis
-        axs[j] = a; lys[j] = layer; drs[j] = dir;
+        axs[j] = a; lys[j] = sliceOf(layer, h.n, mh); drs[j] = dir;
     }
     for (int i = 0; i < 20; i++) {                      // undo base moves nb-1 .. 0
         int j = 19 - i;
@@ -828,10 +919,10 @@ float mapRef(vec3 p) {
         vec3 id = id0 + o;
         if (!occupied(id)) continue;
         Cube cb = cubeState(id);
-        if (cb.pop > 0.0) continue;
+        if (cb.pop > 0.0 || cb.lift > 0.0) continue;        // as mapScene
         vec3 cell, lp;
         bool moving;
-        d = min(d, cubeSDF(p - id * P, cb.axis, cb.layer, cb.ang, cell, lp, moving));
+        d = min(d, cubeSDFOf(p - id * P, id, cb.tex, cb.axis, cb.layer, cb.ang, cell, lp, moving));
     }
     return d;
 }
@@ -893,6 +984,10 @@ void main() {
     // enters the monument's corner, an octant it cannot reach before.
     float px = 2.0 * VIEW * texel;                      // world units per pixel
     float slide = pixelArt > 0.5 ? floor(pan / px + 0.5) * px : pan;  // whole pixels in pixel art
+    gSlide = slide;
+    gPx = px;
+    gGrid = gridOf(max(sizes.x, 3.0), 1.0);
+    gFront = waveFront();
     vec3 ro = rt * (slide + uv.x) + up * uv.y - fw * 2.6558;
     vec2 sp = vec2(slide + uv.x, uv.y);                 // the ray's spot on screen
     float fi = sp.x * 0.47140452;                       // sqrt(2) / 3: the spot's u = x - z
@@ -958,8 +1053,11 @@ void main() {
         // WAVE_B + 2 (R + px) is drawn live.
         float need = 1.0;
         if (wave.y > 0.5) {
-            float a = waveFront() - dot(uv, WAVE_DIR);
-            need = a < -(R + px) ? 2.0 : (a > WAVE_B + R + px ? 1.0 : 0.0);
+            float a = gFront - dot(uv, WAVE_DIR);
+            // (a size wave lets the top cubes, coordinate sum down to -4,
+            // lag behind by up to 4 SIZE_LAG)
+            float lagB = wave.z > 0.5 ? 4.0 * SIZE_LAG : 0.0;
+            need = a < -(R + px) ? 2.0 : (a > WAVE_B + R + px + lagB ? 1.0 : 0.0);
         }
         if (!dyn && need > 0.5) {
             // A cache drawn at another pan holds the same picture shifted
@@ -1027,7 +1125,6 @@ void main() {
                 float n = nTop - float(k);
                 vec3 b = vec3(ci + n, cj + n, n);
                 if (b.x + b.y + b.z < -4.5) break;      // a free cube has an empty cell in front: sum >= -4
-                if (hitAny && b == h.cid) continue;     // the march's own cube: done above
                 if (restPass > 0.5 || imod(win - classOf(b), 3.0) > 0.5) continue;
                 Cube cb = cubeState(b);
                 if (cb.lift <= 0.0 || !occupied(b)) continue;
@@ -1065,6 +1162,13 @@ void main() {
         }
     }
 
+    // the hit cube's size, and the cubie hit if the march left it to here
+    if (hitAny) {
+        vec3 z = cubeSize(h.cid, h.tex);
+        h.n = z.x; h.sc = z.y; h.ph = z.z;
+        cubieAt(gridOf(z.x, max(z.y, 1e-3)), h.axis, h.layer, h.ang, h.cell, h.lp);
+    }
+
     // the theme wave at this pixel and at the hit cube's centre
     float pPix = wavePhase(uv);
     vec3 col = mix(oBg.rgb, bgColor.rgb, smoothstep(0.0, 1.0, pPix));
@@ -1082,24 +1186,28 @@ void main() {
 
         vec3 cw = h.cid * P + (h.tex > -0.5 ? vec3(h.pop, 0.0, 0.0) : vec3(0.0));
         vec2 cubeSpot = vec2(dot(cw, rt) - slide, dot(cw, up));
-        vec3 bodyNow = mix(oBody.rgb, bodyColor.rgb, smoothstep(0.0, 1.0, wavePhase(cubeSpot)));
+        bool sizeWave = wave.z > 0.5;
+        vec3 bodyNow = mix(oBody.rgb, bodyColor.rgb, smoothstep(0.0, 1.0, sizeWave ? h.ph : wavePhase(cubeSpot)));
         col = bodyNow;
-        if (dot(h.cell, nl) > 0.5) {                    // outer faces carry stickers
+        float hm = 0.5 * (h.n - 1.0);                   // outermost cubie coordinate
+        float hk = h.sc * 3.0 / h.n;                    // world units per cubie
+        if (dot(h.cell, nl) > hm - 0.25) {              // outer faces carry stickers
             // Rounded-square sticker: half size 0.43, corner radius 0.035,
             // pulled in a little more on sides where this cubie meets the
             // next cube, so every cube reads on its own in a flat run.
             vec2 ce = fa < 0.5 ? h.cell.yz : (fa < 1.5 ? h.cell.xz : h.cell.xy);
-            vec2 lo = vec2(-0.43) + 0.045 * step(0.5, -ce);
-            vec2 hi = vec2(0.43) - 0.045 * step(0.5, ce);
+            vec2 lo = vec2(-0.43) + 0.045 * step(hm - 0.25, -ce);
+            vec2 hi = vec2(0.43) - 0.045 * step(hm - 0.25, ce);
             vec2 ctr = 0.5 * (lo + hi);
             // The theme wave flips this sticker about its centre line: its
             // width shrinks to |cos| of the flip angle, and past edge-on it
             // shows its back, in the new theme's colour. Its phase comes from
             // its centre's spot on screen (turning layers not counted).
-            vec3 sw = cw + rotA(h.cell + nl * 0.5, h.axis, h.ang);
-            float ph = wavePhase(vec2(dot(sw, rt) - slide, dot(sw, up)));
+            vec3 sw = cw + rotA((h.cell + nl * 0.5) * hk, h.axis, h.ang);
+            float ph = sizeWave ? h.ph : wavePhase(vec2(dot(sw, rt) - slide, dot(sw, up)));
             bool showOld = ph < 0.5;
-            float squeeze = wave.y > 0.5 ? max(abs(cos(ph * 3.14159265)), 0.02) : 1.0;   // exactly 1 with no wave
+            // (a size wave shrinks the whole cube instead)
+            float squeeze = wave.y > 0.5 && !sizeWave ? max(abs(cos(ph * 3.14159265)), 0.02) : 1.0;   // exactly 1 with no wave
             fuv.x = ctr.x + (fuv.x - ctr.x) / squeeze;
             vec2 sq = abs(fuv - ctr) - (0.5 * (hi - lo) - 0.035);
             float sd = length(max(sq, 0.0)) + min(max(sq.x, sq.y), 0.0) - 0.035;
@@ -1111,8 +1219,8 @@ void main() {
                    : (sq.x > sq.y ? vec2(sign(rel.x), 0.0) : vec2(0.0, sign(rel.y)));
             vec3 nw = rotA(nl, h.axis, h.ang);          // face normal in the world
             float nf = min(dot(nw, fw), -0.05);
-            vec3 dx = rotA((rt - fw * (dot(nw, rt) / nf)) * px, h.axis, -h.ang);
-            vec3 dy = rotA((up - fw * (dot(nw, up) / nf)) * px, h.axis, -h.ang);
+            vec3 dx = rotA((rt - fw * (dot(nw, rt) / nf)) * (px / hk), h.axis, -h.ang);
+            vec3 dy = rotA((up - fw * (dot(nw, up) / nf)) * (px / hk), h.axis, -h.ang);
             vec2 fx = fa < 0.5 ? dx.yz : (fa < 1.5 ? dx.xz : dx.xy);
             vec2 fy = fa < 0.5 ? dy.yz : (fa < 1.5 ? dy.xz : dy.xy);
             fx.x /= squeeze;
@@ -1146,7 +1254,7 @@ void main() {
         float ax, ly, dr;
         if (h.src < 1.5) {
             vec3 ax3, ly3, dr3;
-            cycleMoves(h.id, h.cycKey, ax3, ly3, dr3);
+            cycleMoves(h.id, h.cycKey, h.n, ax3, ly3, dr3);
             ax = comp(ax3, h.idx); ly = comp(ly3, h.idx); dr = comp(dr3, h.idx);
             // making move idx: idx moves applied; undoing it: idx + 1
             if (h.pre != h.idx + (h.sgn > 0.0 ? 0.0 : 1.0)) col = bad;
@@ -1173,12 +1281,12 @@ void main() {
         for (int k = 0; k < 3; k++) {
             float fk = float(k);
             float ck = comp(h.cell, fk);
-            if (abs(ck) < 0.5) continue;
+            if (abs(ck) < 0.5 * (h.n - 1.0) - 0.25) continue;
             vec3 c = h.cell;
-            vec3 n = setComp(vec3(0.0), fk, ck);
+            vec3 n = setComp(vec3(0.0), fk, sign(ck));
             homeOf(h, c, n);
             if (home0.x > 8.0) home0 = c;
-            ok = ok && c == home0 && dot(c, n) > 0.5;
+            ok = ok && c == home0 && dot(c, n) > 0.5 * (h.n - 1.0) - 0.25;
             float na = abs(n.x) > 0.5 ? 1.0 : (abs(n.y) > 0.5 ? 2.0 : 4.0);
             ok = ok && imod(floor(axisMask / na), 2.0) < 0.5;
             axisMask += na;
@@ -1190,7 +1298,7 @@ void main() {
     // partial coverers (the cells beside the cell in front of it) hold a
     // cube belongs to a face cut into a triangle
     col = dim;
-    if (hitAny && dot(h.cell, nl) > 0.5) {
+    if (hitAny && dot(h.cell, nl) > 0.5 * (h.n - 1.0) - 0.25) {
         vec3 front = h.cid + nl;
         vec3 e1 = abs(nl.x) > 0.5 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
         vec3 e2 = abs(nl.z) > 0.5 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0);

@@ -108,6 +108,41 @@ for t in ${wave_times:-2.37 101.6}; do
     /usr/bin/python3 -I tools/png-stats.py --same "$out/wlive-$t-$w/f00000.png" "$out/wave-$t-$w/f00000.png" 0.001 || status=1
   done
 done
+# self-check 14: cube sizes. The geometry and colour checks again with the
+# wall's cubes 8 x 8 x 8 (even: cubies at half coordinates) and 13 x 13 x 13.
+for size in ${size_list:-8 13}; do
+  for mode in 1 2 4 6 8; do
+    case $mode in 6) defs=(-DOMACUBE_DEBUG=6 -DOMACUBE_STATIC) ;; *) defs=(-DOMACUBE_DEBUG=$mode) ;; esac
+    qsb=$out/mode-$mode.qsb
+    tools/build-shader.sh "$qsb" "${defs[@]}" >/dev/null
+    for t in ${size_times:-2.37 11.9}; do
+      OMACUBE_SIZE=$size dev/preview.sh "$out/size$size-mode-$mode-t$t" 1 24 "$t" "$W" "$H" "$qsb" >/dev/null
+    done
+    echo "== self-check 14: size $size, mode $mode"
+    if [ "$mode" = 8 ]; then
+      /usr/bin/python3 -I tools/png-stats.py --allow 1e-5 "$out"/size$size-mode-$mode-t*/f00000.png || status=1
+    else
+      /usr/bin/python3 -I tools/png-stats.py "$out"/size$size-mode-$mode-t*/f00000.png || status=1
+    fi
+  done
+done
+# self-check 15: the caches at another size, at rest and mid-slide
+echo "== self-check 15"
+for t in ${size_times:-2.37 11.9}; do
+  check_rest "s8-t$t" OMACUBE_PAN=0 OMACUBE_SIZE=8
+  check_slide "s8-r$t" 0.375 0,1 OMACUBE_PAN=0 OMACUBE_SIZE=8
+done
+# self-check 16: the size wave mid-sweep (4 to 9), live and from the caches
+# at the old and the new size
+echo "== self-check 16"
+for t in ${size_times:-2.37 11.9}; do
+  for w in 0.3 0.6; do
+    OMACUBE_SIZE=9 OMACUBE_OLD_SIZE=4 OMACUBE_WAVE=$w dev/preview.sh "$out/zlive-$t-$w" 1 24 "$t" "$W" "$H" "$out/plain.qsb" >/dev/null
+    OMACUBE_SIZE=9 OMACUBE_OLD_SIZE=4 OMACUBE_WAVE=$w OMACUBE_REST=1 OMACUBE_REST_TURNS=0 OMACUBE_REST_OLD_TURNS=0 \
+      dev/preview.sh "$out/zwave-$t-$w" 1 24 "$t" "$W" "$H" "$out/plain.qsb" >/dev/null
+    /usr/bin/python3 -I tools/png-stats.py --same "$out/zlive-$t-$w/f00000.png" "$out/zwave-$t-$w/f00000.png" 0.001 || status=1
+  done
+done
 echo "== self-check 5"
 dev/preview.sh "$out/loop-a" 1 24 2.37 "$W" "$H" >/dev/null
 OMACUBE_TIME_OFFSET=4189.5 dev/preview.sh "$out/loop-t" 1 24 2.37 "$W" "$H" >/dev/null

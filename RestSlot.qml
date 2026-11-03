@@ -10,6 +10,7 @@ Item {
   id: slot
   property int turn: 0
   property var colours: null           // the palette it was drawn with; null: not drawn
+  property int size: 3                 // and the size of the wall's cubes (n x n x n)
   property real aspect: 1
   property real texel: 1
   property real pixelArt: 0
@@ -30,8 +31,8 @@ Item {
   property real stripLo: 0
   property real stripHi: 1
   signal drawn()
-  function draw(t, c, n) {
-    turn = t; colours = c; pieces = n; piece = 0; done = false; drawing = true
+  function draw(t, c, n, z) {
+    turn = t; colours = c; size = z || 3; pieces = n; piece = 0; done = false; drawing = true
     stripLo = 0; stripHi = 1 / n
     cache.scheduleUpdate()
   }
@@ -50,6 +51,7 @@ Item {
     property real mapPass: 1
     property real restPass: 0; property real useRest: 0
     property vector3d restPans; property vector3d restOk; property vector2d strip
+    property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
     property var rest: slot.mosaic; property var rest1: slot.mosaic; property var rest2: slot.mosaic
     property var motion: slot.mosaic
     property var heights: slot.mosaic
@@ -76,11 +78,13 @@ Item {
     property real restPass: 1
     property real useRest: 0
     property vector3d restPans; property vector3d restOk
+    property vector4d wave; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
     property vector2d strip: Qt.vector2d(slot.stripLo, slot.stripHi)
     property var rest: cache             // its own last contents, kept outside the strip
     property var rest1: slot.mosaic; property var rest2: slot.mosaic
     property var motion: slot.mosaic
     property real time: 0
+    property vector4d sizes: Qt.vector4d(slot.size, 0, 0, 0)
     property real pan: slot.pan
     property real aspect: slot.aspect
     property var mosaic: slot.mosaic

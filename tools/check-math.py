@@ -1168,6 +1168,164 @@ def test_antialias(rng):
     check("antialias: a screen step maps onto the face plane along the view ray", ok)
 
 
+# ---- cube sizes ------------------------------------------------------------------
+
+WHOLE_N = 99   # the shader's WHOLE: a move that turns the whole cube
+
+
+def sd_box3(p, b):
+    q = [abs(p[i]) - b[i] for i in range(3)]
+    outside = math.sqrt(sum(max(c, 0.0) ** 2 for c in q))
+    return outside + min(max(q), 0.0)
+
+
+def set_comp(v, a, x):
+    v = list(v)
+    v[a] = x
+    return tuple(v)
+
+
+def cube_sdf_n(q, n, sc, axis, layer, ang):
+    """The shader's cubeSDFOf(): boxes, n-independent. Returns (d, moving, lp)."""
+    hb = 1.5 * sc
+    if abs(ang) <= 1e-4:
+        return sd_box(q, hb), False, q
+    qr = rot_axis(q, axis, -ang)
+    if layer == WHOLE_N:
+        return sd_box(qr, hb), True, qr
+    k = 3.0 * sc / n
+    lo = (layer - 0.5) * k
+    qa = q[axis]
+    d = 1e9
+    if lo > -hb + 1e-3:
+        d = sd_box3(set_comp(q, axis, qa - 0.5 * (lo - hb)), set_comp((hb,) * 3, axis, 0.5 * (lo + hb)))
+    if lo + k < hb - 1e-3:
+        d = min(d, sd_box3(set_comp(q, axis, qa - 0.5 * (lo + k + hb)), set_comp((hb,) * 3, axis, 0.5 * (hb - lo - k))))
+    ds = sd_box3(set_comp(qr, axis, qr[axis] - layer * k), set_comp((hb,) * 3, axis, 0.5 * k))
+    if ds < d:
+        return ds, True, qr
+    return d, False, q
+
+
+def cubies(n):
+    m = (n - 1) / 2
+    r = [i - m for i in range(n)]
+    return [(i, j, k) for i in r for j in r for k in r]
+
+
+def cube_sdf_n_brute(q, n, sc, axis, layer, ang):
+    """Every cubie placed explicitly. Returns (d, set of nearest cubies)."""
+    k = 3.0 * sc / n
+    best, near = 1e9, set()
+    for c in cubies(n):
+        moving = abs(ang) > 1e-4 and (layer == WHOLE_N or c[axis] == layer)
+        local = rot_axis(q, axis, -ang) if moving else q
+        d = sd_box(sub(local, mul(c, k)), 0.5 * k)
+        if d < best - 1e-9:
+            best, near = d, {c}
+        elif d < best + 1e-9:
+            near.add(c)
+    return best, near
+
+
+def cubie_at(n, sc, axis, layer, ang, moving, lp):
+    """The shader's cubieAt(): the cubie at a hit, from the piece's frame."""
+    m = (n - 1) / 2
+    o = m - math.floor(m)
+    g = mul(lp, n / (3.0 * sc))
+    c = [clamp(math.floor(v + 0.5 - o) + o, -m, m) for v in g]
+    if abs(ang) > 1e-4 and layer != WHOLE_N:
+        if moving:
+            c[axis] = layer
+        elif c[axis] == layer:
+            c[axis] = layer - 1 if g[axis] < layer else layer + 1
+    return tuple(c)
+
+
+def random_state_n(rng, n):
+    axis = rng.randrange(3)
+    m = (n - 1) / 2
+    layer = WHOLE_N if rng.random() < 0.3 else rng.randrange(n) - m
+    ang = rng.uniform(-1.1, 1.1) * math.pi / 2
+    if rng.random() < 0.2:
+        ang = 0.0
+    return axis, layer, ang
+
+
+def colours_n_ok(rng, n, length):
+    """Slice moves on an n x n x n cube: undoing them recovers every sticker."""
+    m = (n - 1) / 2
+    st = {}
+    for c in cubies(n):
+        for f in FACES:
+            if dot(c, f) == m:
+                st[(c, f)] = FACES[f]
+    moves = []
+    axis = rng.randrange(3)
+    for j in range(length):
+        step, layer, direction = decode(rng.randrange(20))
+        if j > 0:
+            axis = (axis + step) % 3
+        layer = WHOLE_N if layer == 2 else rng.randrange(n) - m
+        moves.append((axis, layer, direction))
+    def inside(c, mv):
+        return mv[1] == WHOLE_N or c[mv[0]] == mv[1]
+    for mv in moves:
+        out = {}
+        for (c, f), colour in st.items():
+            if inside(c, mv):
+                c, f = rot90(c, mv[0], mv[2]), rot90(f, mv[0], mv[2])
+            out[(c, f)] = colour
+        st = out
+    counts = {}
+    for colour in st.values():
+        counts[colour] = counts.get(colour, 0) + 1
+    if len(counts) != 6 or any(v != n * n for v in counts.values()):
+        return False
+    for (c, f), colour in st.items():
+        for mv in reversed(moves):
+            if inside(c, mv):
+                c, f = rot90(c, mv[0], -mv[2]), rot90(f, mv[0], -mv[2])
+        if FACES[f] != colour or dot(c, f) != m:
+            return False
+    return True
+
+
+def test_sizes(rng):
+    worst, inside_ok, cubie_bad, samples = 0.0, True, 0, 0
+    for n, count in ((3, 3000), (4, 2000), (5, 1500), (8, 600), (13, 150)):
+        for _ in range(count):
+            state = random_state_n(rng, n)
+            sc = 1.0 if rng.random() < 0.7 else rng.uniform(0.05, 1.0)
+            q = tuple(rng.uniform(-3.2, 3.2) * sc for _ in range(3))
+            fast, moving, lp = cube_sdf_n(q, n, sc, *state)
+            true, near = cube_sdf_n_brute(q, n, sc, *state)
+            if true > 0:
+                worst = max(worst, abs(fast - true))
+            elif fast > 1e-12:
+                inside_ok = False
+            # walk the point in to just off the surface (along the gradient,
+            # by sphere tracing towards the centre): cubieAt names a nearest cubie
+            if true > 0:
+                p = q
+                for _ in range(60):
+                    d, moving, lp = cube_sdf_n(p, n, sc, *state)
+                    if d < 1e-4 * sc:
+                        break
+                    p = add(p, mul(p, -d / max(norm(p), 1e-9)))
+                td, near = cube_sdf_n_brute(p, n, sc, *state)
+                if 0 < td < 1e-3 * sc and d < 1e-4 * sc:
+                    samples += 1
+                    if cubie_at(n, sc, *state, moving, lp) not in near:
+                        cubie_bad += 1
+    check("sizes: n x n x n cube distance (boxes) is exact outside the cube", worst < 1e-9, f"max error {worst:.1e}")
+    check("sizes: points inside a cube read as inside", inside_ok)
+    check("sizes: the cubie worked out at a hit is the nearest one", cubie_bad == 0, f"{cubie_bad} of {samples}")
+    check("sizes: enough hit points sampled", samples > 2000, f"{samples}")
+    ok = all(colours_n_ok(rng, n, rng.randrange(0, 24)) for n in (4, 5, 8, 13) for _ in range(40))
+    check("sizes: slice moves stay legal and undoing them recovers every sticker", ok)
+
+
 def main():
     rng = random.Random(20261101)
     test_geometry(rng)
@@ -1186,6 +1344,7 @@ def main():
     test_camera()
     test_easing()
     test_antialias(rng)
+    test_sizes(rng)
     print()
     if failures:
         print(f"{len(failures)} check(s) failed")

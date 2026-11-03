@@ -1,6 +1,6 @@
 # The maths behind Omacube
 
-Omacube draws an endless stack of 3x3x3 puzzle cubes with one fragment shader, `shaders/omacube.frag`. This page explains each part of the maths and how it is checked. Two kinds of checks back it up:
+Omacube draws an endless stack of puzzle cubes, 3x3x3 up to 17x17x17, with one fragment shader, `shaders/omacube.frag`. This page explains each part of the maths and how it is checked. Two kinds of checks back it up:
 
 - **`tools/check-math.py`** rebuilds every claim below from scratch in plain Python (standard library only), using brute force where the shader takes shortcuts. Run `python3 tools/check-math.py`.
 - **`dev/selfcheck.sh`** builds debug versions of the real shader and renders them on your GPU. Each debug version paints any pixel that fails a check magenta, then counts those pixels.
@@ -16,15 +16,15 @@ The view is orthographic and looks straight down the cube diagonal, so the view 
 
 ## 2. One cube
 
-A cube is 27 cubies of half-size 0.5 on a unit grid, so it spans -1.5 to 1.5. Because neighbouring cubies touch, the nearest cubie to a point `q` is found by rounding to the grid and clamping to the cube: `clamp(round(q), -1, 1)`. A box's signed distance gives the distance to that cubie.
+A cube spans -1.5 to 1.5: n x n x n cubies (27 at the classic 3), each 3/n across (section 23). The cubies tile it, so from outside a cube is just boxes, and its distance needs no cubie at all:
 
-While a layer turns:
+- at rest, the cube is one box;
+- while a slab (one layer) turns, it is the slab, measured in a frame rotated back by the turn angle, and the blocks on either side of it, which stay put;
+- while the whole cube tumbles, it is one rotated box.
 
-- The turning layer's cubies are measured in a frame rotated back by the turn angle.
-- The cubies that stay put are measured with that layer excluded: the nearest remaining layer stands in for it.
-- The distance to the cube is the smaller of the two.
+The distance is the smallest of those, and it does not depend on n. The cubie a ray hit is worked out once, at the hit: round the hit point to the cubie grid and clamp to the cube (on the turning slab, keep the slab's layer; on a block beside it, keep out of it). Before 0.4.0 the shader measured the nearest cubie directly, `clamp(round(q), -1, 1)`, at every step.
 
-`check-math.py` compares this against all 27 cubies placed explicitly, at 10,000 random points and random turns, including the ~10% overshoot. Outside the cube the two agree exactly (error 0), and points inside always read as inside.
+`check-math.py` compares the boxes against every cubie placed explicitly, for n = 3, 4, 5, 8 and 13, scaled and not, at thousands of random points and turns including the ~10% overshoot: outside the cube they agree to 4e-16, points inside always read as inside, and at 6,500 points walked onto the surface the cubie worked out is always a nearest one.
 
 ## 3. The stack: whole faces only
 
@@ -203,14 +203,14 @@ Three rules make every motion collision-free.
 
 Sliding a cube along the view direction changes nothing about which point of it a ray hits; it only makes that point nearer, by `lift·√3`. `check-math.py` confirms it by tracing 300 random rays at turned cubes, slid and not: the same point every time, nearer by exactly `lift·√3` (error 2e-9).
 
-So the shader doesn't march slid-out cubes at all. It marches the stack with every cube in its cell, turning layers included, using the fast distance bound of section 4. Then it checks the few cubes that can be out right now and cover the pixel. Each candidate:
+So the shader doesn't march slid-out cubes at all. Only a cube that is slid out (or, on the word, popped out) ever turns, and it covers the same pixels it would in its cell, nearer; so the march treats its cell as empty and every other cube as a plain box, using the fast distance bound of section 4. Then it checks the few cubes that can be out right now and cover the pixel. Each candidate:
 
 1. lies in one of the cell columns `(i, j, 0) + n(1, 1, 1)` whose screen point is within R of the pixel;
 2. has coordinate sum −4 or more (a free cube has an empty cell in front of it; before 0.4.0 this stopped at −3, so a free cube one layer deeper turned without being drawn slid out);
 3. is of the class whose window it is;
 4. is in a burst (only then is the free test run).
 
-Each one is traced on its own. The nearest surface, march or candidate, after taking off `lift·√3`, is what the pixel shows.
+Each one is traced on its own (up to 64 steps; a ray that runs out within a pixel of the cube counts as a hit, as in the main march, so a ray grazing the edge of a turning slab no longer shows what is behind it as a thin coloured line). The nearest surface, march or candidate, after taking off `lift·√3`, is what the pixel shows.
 
 Marching the slid-out stack directly would need a much smaller bound (`3 + min|q| − LIFT/2 − R`, as small as 0.087 against 0.402), and on the GPU it cost about 108 W against 48 W at native resolution. Self-check 8 keeps that direct march as a reference and compares the two on every sticker pixel: they agree, except for at most a pixel per frame on silhouettes where the two sample a depth edge differently. Self-check 3 shows the march back at about 13.5 steps per ray (the original averaged 13.9).
 
@@ -309,4 +309,18 @@ When the theme changes, a straight front sweeps across the screen in 1.8 s, movi
 On the HD 520 at 1600x900, with the theme switched every 3 s, frames over 90 ms went from 89 in 300 (an all-live crossfade) to 1, and the wave runs at about 25 frames a second.
 
 **Checks.** Self-check 13 renders the wave at 30% and 60% of its sweep, live and from the two caches, at rest and on a monument, and finds them identical but for a few pixels off by up to a few /255.
+
+## 23. Cube sizes
+
+The wall's cubes share one size, n x n x n, from 3 to 17. It changes every 15 class windows (149.625 s), following a fixed shuffled table of 28 sizes (3, 6, 4, 9, 5, 12, 7, 17, 10, 3, 8, 14, 6, 11, 4, 15, 9, 13, 5, 16, 7, 12, 3, 10, 6, 13, 8, 5): every size appears, each step changes the size by at least 2, and 28 epochs make exactly one 4189.5 s loop, so the loop stays seamless. The word's 20 cubes stay 3 x 3 x 3, so their mosaic still spells the word. A screen caps n so a sticker never gets under about 4 pixels (n ≤ height / 40 in rendered pixels); pixel art at size 3 on a 900-line screen goes up to 7. The setting `cubeSizes: false` keeps every cube 3 x 3 x 3.
+
+**Cubies and moves.** On an n-cube the cubies sit at centred coordinates −m … m, m = (n − 1)/2: whole numbers for odd n, halves for even. A move still has an axis, a direction and either the whole cube (2 in 5) or a slice; the slice is any of the n layers, chosen by the fraction of the move's own hash (its whole part, times 20, is the move code), so no second hash is needed. The 3 x 3 x 3 keeps the layer the move code gives, so at n = 3 every move, and every picture, is what it was before sizes existed. Colours are still found by undoing every move (section 5): undoing a quarter turn of a slice is the same rotation as on the 3 x 3 x 3, and `check-math.py` turns 160 random n-cubes (n = 4, 5, 8, 13) sticker by sticker and finds every state legal (n² stickers of each colour) and every colour recovered by undoing.
+
+A base scramble of up to 20 slice moves leaves a big cube mostly solved with a few displaced stripes, so the wall looks like a plaid of colour at n = 17 rather than noise. Bursts are as before: three moves out, a rest, three back. The physics are unchanged: a slab of any thickness sweeps the same circle as a 3 x 3 x 3 layer, so the same LIFT clears it.
+
+**The size wave.** A change of size plays a wave like the theme wave (section 22): this workspace is drawn at the new size first, a strip a frame, then a front sweeps across in 1.8 s. As it passes a cube, the cube shrinks away at its old size (scale |cos(πφ)| over the first half of its phase φ) and grows back at the new one. A cube's phase comes from its centre's spot on screen, set back by 0.4 world units of the front's travel per unit of coordinate sum below 0, so deeper cubes follow a little later and the wall seems to peel away layer by layer. A shrunk cube is a smaller box; the march's bound (section 4) still holds, since no part of a cube reaches beyond R. Ahead of the front the old-size cache is copied, behind it the new; only the band, widened by the deepest top cube's delay (4 × 0.4), is drawn live. A theme change that comes during a size wave, or the other way round, waits and plays next.
+
+**Cost.** The general cube costs nothing at the default: on the HD 520 at 1600x900 the GPU is about 80% busy at 24 fps, as before sizes. (A first version that rounded to the cubie grid of size n at every march step, and kept each cube's size in the per-ray cache, cost 92%: the Intel compiler grew the shader from 24,900 to 38,300 instructions. Measuring plain boxes, working out the cubie once at the hit, and keeping the turning geometry out of the march fixed that.)
+
+**Checks.** Self-check 14 runs the geometry and colour checks (modes 1, 2, 4, 6 and 8) again at n = 8 and n = 13. Self-check 15 runs the cache checks (10 and 12) at n = 8, and self-check 16 renders the size wave from 4 to 9 at 30% and 60%, live and from the two caches.
 

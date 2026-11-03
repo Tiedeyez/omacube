@@ -40,6 +40,12 @@ ShellRoot {
         onLoaded: root.oldPalette = Palette.fromText(text())
     }
     readonly property real waveT: parseFloat(Quickshell.env("OMACUBE_WAVE") || "0")
+    // OMACUBE_SIZE: the wall's cube size (default 3). OMACUBE_OLD_SIZE with
+    // OMACUBE_WAVE: the size wave from that size (caches in
+    // OMACUBE_REST_OLD_TURNS are drawn at it, in the same theme)
+    readonly property int size: parseInt(Quickshell.env("OMACUBE_SIZE") || "3")
+    readonly property int oldSize: parseInt(Quickshell.env("OMACUBE_OLD_SIZE") || "0") || size
+    readonly property bool sizeWave: oldSize !== size
 
     function wrap(x, m) { return ((x % m) + m) % m }
     function centred(x, m) { return wrap(x + m / 2, m) - m / 2 }
@@ -73,6 +79,7 @@ ShellRoot {
             property var motion: mosaicData
             property real restPass: 0; property real useRest: 0
             property vector3d restPans; property vector3d restOk; property vector2d strip
+            property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
             property real time; property real pan; property real aspect; property real texel; property real pixelArt
             property color c0; property color c1; property color c2; property color c3; property color c4; property color c5
             property color bodyColor; property color bgColor
@@ -92,6 +99,7 @@ ShellRoot {
             property real mapPass: 2
             property real restPass: 0; property real useRest: 0
             property vector3d restPans; property vector3d restOk; property vector2d strip
+            property vector4d wave; property vector4d sizes; property color o0; property color o1; property color o2; property color o3; property color o4; property color o5; property color oBody; property color oBg
             property var rest1: mosaicData; property var rest2: mosaicData
             width: hSize.x; height: hSize.y
             blending: false
@@ -124,11 +132,11 @@ ShellRoot {
             for (var i = 0; i < nSlots; i++) {
                 if (slots[i].done || slots[i].drawing) continue
                 var old = i >= restTurns.length
-                slots[i].draw(old ? oldTurns[i - restTurns.length] : restTurns[i], old ? root.oldPalette : root.palette, pieces)
+                slots[i].draw(old ? oldTurns[i - restTurns.length] : restTurns[i], old ? (root.oldPalette || root.palette) : root.palette, pieces, old ? root.oldSize : root.size)
                 return
             }
         }
-        function okOf(s) { return !s.done ? 0 : (s.colours === root.palette ? 1 : 2) }
+        function okOf(s) { return !s.done ? 0 : (s.colours === root.palette && s.size === root.size ? 1 : 2) }
         RestSlot { id: slotA; onDrawn: win.drawNext(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: root.w; texH: root.h; fxW: fx.width; fxH: fx.height; panPeriod: 3072 * 3 * Math.SQRT2; panShift: root.panOffset; mosaic: mosaicData; shader: fx.fragmentShader }
         RestSlot { id: slotB; onDrawn: win.drawNext(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: root.w; texH: root.h; fxW: fx.width; fxH: fx.height; panPeriod: 3072 * 3 * Math.SQRT2; panShift: root.panOffset; mosaic: mosaicData; shader: fx.fragmentShader }
         RestSlot { id: slotC; onDrawn: win.drawNext(); aspect: fx.aspect; texel: fx.texel; pixelArt: fx.pixelArt; texW: root.w; texH: root.h; fxW: fx.width; fxH: fx.height; panPeriod: 3072 * 3 * Math.SQRT2; panShift: root.panOffset; mosaic: mosaicData; shader: fx.fragmentShader }
@@ -148,7 +156,8 @@ ShellRoot {
             // OMACUBE_REST=1: copy pixels nothing moves near from the rest caches
             property real useRest: win.useCache ? 1 : 0
             property vector3d restOk: Qt.vector3d(win.okOf(slotA), win.okOf(slotB), win.okOf(slotC))
-            property vector4d wave: Qt.vector4d(root.waveT, root.oldPalette ? 1 : 0, 0, 0)
+            property vector4d wave: Qt.vector4d(root.waveT, root.oldPalette || root.sizeWave ? 1 : 0, root.sizeWave ? 1 : 0, 0)
+            property vector4d sizes: Qt.vector4d(root.size, root.oldSize, 0, 0)
             readonly property var old: root.oldPalette || root.palette
             property color o0: old.stickers[0]; property color o1: old.stickers[1]; property color o2: old.stickers[2]
             property color o3: old.stickers[3]; property color o4: old.stickers[4]; property color o5: old.stickers[5]
