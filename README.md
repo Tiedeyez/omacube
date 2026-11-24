@@ -123,13 +123,25 @@ Add any of these to the plugin's own entry in `~/.config/omarchy/shell.json`. Th
 - `fps` (default 24) sets how many times a second the background redraws.
 - `cubeSizes` (default true): every 2.5 minutes the cubes change size, anywhere from 3x3x3 to 17x17x17, in a wave that shrinks them away and grows them back. false keeps them 3x3x3.
 - `easterEgg` (default true): double-clicking the cube at the centre of the screen starts the easter egg. false: the background takes no clicks at all.
+- `batterySaver` (default true): on battery power the background redraws half as often (never fewer than 8 times a second). The cubes move at the same speed, in fewer steps, and the GPU does about half the work. false: the same `fps` on battery as on mains.
 - `pauseUnderWindows` (default true) holds the animation still while tiled windows fill the workspace and only the gaps between them show it. Floating windows don't count. Workspace slides still play.
 
 `omarchy plugin disable` removes the entry, and these settings with it.
 
+## Commands
+
+```bash
+omarchy-shell tiedeyez.omacube pause     # hold the cubes still: a clean screenshot, or a cool, quiet GPU
+omarchy-shell tiedeyez.omacube resume
+omarchy-shell tiedeyez.omacube toggle
+omarchy-shell tiedeyez.omacube play      # start the easter egg from the keyboard
+```
+
+A pause lasts until you resume or the shell restarts; nothing is saved. Bind `play` to a key and the cube is one keypress away, even with windows over the desktop.
+
 ## The easter egg
 
-Double-click the cube at the centre of the screen (with no window over it). It glows yellow, lifts out of the wall, leaving its hole, and floats to the middle of the screen at the size and in the exact state it was in, ready to play. It is a real n x n x n cube, whatever size the wall is at.
+Double-click the cube at the centre of the screen (with no window over it), or run `omarchy-shell tiedeyez.omacube play`. It glows yellow, lifts out of the wall, leaving its hole, and floats to the middle of the screen at the size and in the exact state it was in, ready to play. It is a real n x n x n cube, whatever size the wall is at.
 
 | | |
 |---|---|

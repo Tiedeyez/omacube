@@ -4,7 +4,9 @@ import QtQuick
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
+import Quickshell.Services.UPower
 import Quickshell.Wayland
+import qs.Commons
 import "Palette.js" as Palette
 
 // Omacube: an animated desktop background of an endless isometric stack of
@@ -57,6 +59,10 @@ Item {
   // easterEgg: double-click the cube at the centre of the screen to take it
   // out of the wall and play with it. false: the background takes no clicks.
   readonly property bool defaultEasterEgg: true
+  // batterySaver: on battery power, redraw half as often (never under 8 a
+  // second). The cubes move at the same speed, in fewer steps. false: the
+  // same fps on battery as on mains.
+  readonly property bool defaultBatterySaver: true
 
   property var settings: ({})
   function setting(key, fallback, lo, hi) {
@@ -72,6 +78,23 @@ Item {
     ? settings.cubeSizes : defaultCubeSizes
   readonly property bool easterEgg: typeof settings.easterEgg === "boolean"
     ? settings.easterEgg : defaultEasterEgg
+  readonly property bool batterySaver: typeof settings.batterySaver === "boolean"
+    ? settings.batterySaver : defaultBatterySaver
+  readonly property int shownFps: batterySaver && UPower.onBattery ? Math.max(Math.min(fps, 8), Math.round(fps / 2)) : fps
+
+  // ---- commands --------------------------------------------------------------
+  //   omarchy-shell tiedeyez.omacube pause | resume | toggle | play
+  // pause holds the cubes still (a clean screenshot, or a cool, quiet GPU)
+  // until resume or a shell restart; play takes the cube at the centre of the
+  // screen out of the wall, like the double-click. Nothing is written.
+  property bool paused: false
+  ShellIpc {
+    target: "tiedeyez.omacube"
+    function pause(): void { root.paused = true }
+    function resume(): void { root.paused = false }
+    function toggle(): void { root.paused = !root.paused }
+    function play(): void { root.playEgg() }
+  }
 
   function entryFrom(text) {
     try {
@@ -182,9 +205,9 @@ Item {
   }
 
   Timer {
-    interval: Math.round(1000 / root.fps)
+    interval: Math.round(1000 / root.shownFps)
     repeat: true
-    running: root.anyVisible
+    running: root.anyVisible && !root.paused
     property double last: Date.now()
     onRunningChanged: last = Date.now()
     onTriggered: {
@@ -250,6 +273,16 @@ Item {
   function debugEgg() {
     var p = screenWindows.instances[0]
     if (p) p.eggPick(p.width / 2, p.height / 2)
+  }
+  // the cube at the centre of the focused screen, without the mouse
+  function playEgg() {
+    if (egg) return
+    var ws = screenWindows.instances
+    var focused = Hyprland.focusedMonitor
+    for (var i = 0; i < ws.length; i++) {
+      if (ws[i] && focused && ws[i].monitor === focused) { ws[i].eggPick(ws[i].width / 2, ws[i].height / 2); return }
+    }
+    debugEgg()
   }
   function startEgg(info) {
     if (egg) return

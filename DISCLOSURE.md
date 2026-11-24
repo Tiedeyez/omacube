@@ -24,11 +24,12 @@ Nothing. The plugin creates no files, folders, caches or settings.
 | `mosaic.png` (in the plugin folder) | A hidden Qt `Image`, handed to the shader as a texture | The sticker colours of the 20 cube states that spell OMARCHY |
 | The focused workspace ID, each monitor's active workspace, and whether that workspace has a fullscreen window | Quickshell's built-in `Quickshell.Hyprland` module, from Hyprland's event socket | The sideways slide on a workspace switch, and pausing while a fullscreen window covers the screen |
 | Each workspace's windows, and whether each is floating | Quickshell's `Hyprland.refreshToplevels()`, which asks Hyprland for its client list over its request socket; re-asked 60 ms after a window opens, closes, moves or changes floating mode (Hyprland's raw events, of which only the event name is used) | `pauseUnderWindows`: pausing while tiled windows fill the workspace. Hyprland's client list and events also carry each window's class and title; Quickshell receives them, and the plugin reads only the `floating` flag and the event name |
-| The plugin's own entry in `~/.config/omarchy/shell.json` (the object with `"id": "tiedeyez.omacube"`) | `FileView`, watched for changes; parsed as JSON, and only the keys `renderWidth`, `pixelSize`, `fps`, `pauseUnderWindows`, `cubeSizes` and `easterEgg` are used, each range-checked | Optional per-machine settings |
+| The plugin's own entry in `~/.config/omarchy/shell.json` (the object with `"id": "tiedeyez.omacube"`) | `FileView`, watched for changes; parsed as JSON, and only the keys `renderWidth`, `pixelSize`, `fps`, `pauseUnderWindows`, `cubeSizes`, `easterEgg` and `batterySaver` are used, each range-checked | Optional per-machine settings |
 | The list of screens | `Quickshell.screens` | One background surface per screen |
 | `~/.local/state/omarchy/current/theme/colors.toml` | Quickshell's `FileView`, the same way Omarchy's own shell reads it | The sticker and plastic colours. Only `key = "#rrggbb"` lines are used, and only within the first 64 KiB and 512 lines; everything else is ignored |
 | `~/.local/state/omarchy/current/theme.name` | `FileView`, watched for changes; its content is never used | `omarchy theme set` rewrites it after switching themes, which tells the plugin to read `colors.toml` again |
 | `HOME` | `Quickshell.env` | To build the two paths above |
+| Whether the computer is running on battery | Quickshell's built-in `Quickshell.Services.UPower` module (`UPower.onBattery`, from the system's UPower service over D-Bus) | `batterySaver`: redraw half as often on battery. Only that one yes-or-no is used; no battery level, history or device details |
 
 It does not read your other files, your wallpaper, other environment variables, the clipboard or window contents, and it does not use window titles or classes (see the client-list row above).
 
@@ -39,6 +40,10 @@ One layer-shell surface per screen, namespace `tiedeyez-omacube`, on the `bottom
 While you play the easter egg, one more surface: namespace `tiedeyez-omacube-egg`, on the `overlay` layer, covering the screen it was started on, with **exclusive keyboard focus**: every key goes to the cube until you press Esc, which closes it. It reads only the keys it uses (the letters R L U D F B M E S X Y Z H, digits, arrows, Space, Backspace, Ctrl+Z and Esc) and the mouse over that screen; nothing is stored, and nothing about it leaves the plugin.
 
 To start the egg from the state the cube is in, the plugin renders one extra 102 x 18 pixel image of it (the same shader, a pick pass) and reads that image back through a hidden Qt `Canvas`. It never reads the screen, other windows or other surfaces.
+
+## Commands it answers
+
+One IPC handler on the shell's own socket, target `tiedeyez.omacube`, with four functions that take no arguments: `pause`, `resume`, `toggle` (one in-memory flag that stops the frame clock) and `play` (starts the easter egg on the focused screen, exactly as the double-click does). Run them with `omarchy-shell tiedeyez.omacube <name>`. Nothing is written, and the pause is forgotten when the shell restarts.
 
 ## Subprocesses
 
